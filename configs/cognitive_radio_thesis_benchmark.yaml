@@ -1,0 +1,151 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: pu_presence_main
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_bandwidth
+    - PU_burst_duration
+    - Frequency_Band
+tasks:
+  - name: presence
+    task_name: pu_presence_main
+    target_column: PU_Presence
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_bandwidth
+      - PU_burst_duration
+      - Frequency_Band
+  - name: burst
+    task_name: pu_burst_duration_aux
+    target_column: PU_burst_duration
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Presence
+      - PU_bandwidth
+      - Frequency_Band
+      - PU_drift_type
+  - name: drift
+    task_name: pu_drift_type_mid
+    target_column: PU_drift_type
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Presence
+      - PU_bandwidth
+      - Frequency_Band
+      - PU_burst_duration
+  - name: band
+    task_name: frequency_band_aux
+    target_column: Frequency_Band
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Presence
+      - PU_bandwidth
+      - PU_burst_duration
+      - PU_drift_type
+features:
+  method: hybrid
+  top_k: 24
+model:
+  name: bagged_logistic_regression
+  mode: single_task
+  epochs: 20
+  batch_size: 32
+  learning_rate: 0.001
+  dropout: 0.2
+  weight_decay: 0.0001
+  patience: 6
+  scheduler: plateau
+  class_weighting: balanced
+  sequence_layout: all
+benchmark:
+  matrix:
+    tasks:
+      - presence
+      - burst
+      - drift
+      - band
+    models:
+      - bagged_logistic_regression
+      - random_forest
+      - cnn_1d
+      - cnn_lstm
+      - transformer_1d
+      - cognitive_radio_scalar_hybrid
+    seeds:
+      - 42
+      - 52
+    modes:
+      - single_task
+    transfer_strategies:
+      - scratch
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+  loader_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  amp: auto
+  min_batch_size: 8
+  oom_retries: 3
+  oom_backoff_factor: 0.5
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+  cross_validation:
+    enabled: true
+    folds: 5
+  learning_curve:
+    enabled: true
+    train_sizes:
+      - 0.2
+      - 0.4
+      - 0.6
+      - 0.8
+      - 1.0
+  ablation:
+    enabled: true
+    layouts:
+      - basic_only
+      - all
+  robustness_sweeps:
+    noise_levels:
+      - 0.0
+      - 0.05
+      - 0.10
+    train_ratios:
+      - 0.4
+      - 0.6
+      - 0.8
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_radio_thesis_benchmark
+  artifacts_dir: ../artifacts/runs

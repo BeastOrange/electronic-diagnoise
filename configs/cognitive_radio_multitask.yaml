@@ -1,0 +1,65 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: presence
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Signal_Strength
+    - PU_bandwidth
+    - freq_bin
+tasks:
+  - name: presence
+    task_name: presence
+    target_column: PU_Presence
+    metric_primary: accuracy
+    metric_secondary: f1
+    loss_weight: 1.0
+  - name: band
+    task_name: band
+    target_column: Frequency_Band
+    metric_primary: accuracy
+    metric_secondary: f1
+    loss_weight: 1.0
+  - name: burst
+    task_name: burst
+    target_column: PU_burst_duration
+    metric_primary: accuracy
+    metric_secondary: f1
+    loss_weight: 1.0
+features:
+  method: hybrid
+  top_k: 20
+  domain_feature_groups:
+    enabled: []
+model:
+  name: cnn_1d
+  mode: multitask
+  epochs: 20
+  batch_size: 32
+  learning_rate: 0.001
+  dropout: 0.2
+  weight_decay: 0.0001
+  patience: 5
+  scheduler: plateau
+  sequence_layout: temporal_cov_only
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_multitask
+  artifacts_dir: ../artifacts/runs

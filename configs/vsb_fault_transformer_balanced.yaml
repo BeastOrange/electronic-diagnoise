@@ -1,0 +1,61 @@
+dataset:
+  name: vsb_powerline_fault
+  schema: tabular
+  input_path: ../data/vsb-power-line-fault-detection::max_signals=8712::max_timesteps=200000::seed=42
+  label_column: target
+task:
+  type: classification
+  task_name: vsb_fault_transformer_balanced
+  target_column: target
+  metric_primary: minority_f1
+  metric_secondary: recall
+  drop_leakage_columns:
+    - signal_id
+    - id_measurement
+features:
+  method: hybrid
+  top_k: 64
+model:
+  name: transformer_1d
+  mode: single_task
+  epochs: 60
+  batch_size: 48
+  learning_rate: 0.0003
+  dropout: 0.25
+  weight_decay: 0.001
+  patience: 12
+  scheduler: plateau
+  scheduler_kwargs:
+    factor: 0.5
+    patience: 4
+    min_lr: 0.000005
+  class_weighting: balanced
+  loss_name: focal
+  focal_gamma: 2.0
+  sequence_layout: all
+trainer:
+  train_ratio: 0.75
+  val_ratio: 0.15
+  random_state: 42
+  sampler: balanced
+metrics:
+  primary: minority_f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: minority_f1
+    grid:
+      - 0.10
+      - 0.15
+      - 0.20
+      - 0.25
+      - 0.30
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+runtime:
+  prepared_dir: ../artifacts/prepared_vsb_fault_transformer_balanced_full
+  artifacts_dir: ../artifacts/runs

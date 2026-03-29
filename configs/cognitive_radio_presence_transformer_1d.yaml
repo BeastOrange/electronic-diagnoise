@@ -1,0 +1,80 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: pu_presence_transformer_1d_main
+  target_column: PU_Presence
+  metric_primary: f1
+  metric_secondary: accuracy
+  drop_leakage_columns:
+    - time_index
+    - PU_Signal_Strength
+    - PU_bandwidth
+    - PU_burst_duration
+    - Frequency_Band
+features:
+  method: hybrid
+  top_k: 48
+model:
+  name: transformer_1d
+  candidates:
+    - transformer_1d
+    - cnn_1d
+    - bagged_logistic_regression
+  epochs: 80
+  batch_size: 16
+  learning_rate: 0.0002
+  dropout: 0.2
+  weight_decay: 0.001
+  patience: 12
+  scheduler: plateau
+  scheduler_kwargs:
+    factor: 0.5
+    patience: 4
+    min_lr: 0.000005
+  class_weighting: balanced
+  sequence_layout: all
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.30
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+      - 0.65
+  cross_validation:
+    enabled: true
+    folds: 5
+  learning_curve:
+    enabled: true
+    train_sizes:
+      - 0.2
+      - 0.4
+      - 0.6
+      - 0.8
+      - 1.0
+  ablation:
+    enabled: true
+    layouts:
+      - all
+      - temporal_cov_only
+      - cov_flat_only
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_presence_transformer_1d
+  artifacts_dir: ../artifacts/runs

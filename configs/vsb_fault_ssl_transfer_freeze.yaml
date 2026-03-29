@@ -1,0 +1,61 @@
+dataset:
+  name: vsb_powerline_fault
+  schema: tabular
+  input_path: ../data/vsb-power-line-fault-detection::max_signals=8712::max_timesteps=200000::seed=42
+  label_column: target
+task:
+  type: classification
+  task_name: vsb_fault_ssl_transfer_freeze
+  target_column: target
+  metric_primary: f1
+  metric_secondary: precision
+  drop_leakage_columns:
+    - signal_id
+    - id_measurement
+features:
+  method: hybrid
+  top_k: 48
+model:
+  name: cnn_1d
+  mode: single_task
+  epochs: 40
+  batch_size: 64
+  learning_rate: 0.0005
+  dropout: 0.25
+  weight_decay: 0.0005
+  patience: 8
+  scheduler: plateau
+  class_weighting: balanced
+  loss_name: focal
+  focal_gamma: 2.0
+  sequence_layout: all
+  transfer:
+    enabled: true
+    from_run_dir: ../artifacts/runs/REPLACE_WITH_VSB_SSL_PRETRAIN_RUN_DIR
+    strategy: freeze
+trainer:
+  train_ratio: 0.75
+  val_ratio: 0.15
+  random_state: 42
+  sampler: balanced
+metrics:
+  primary: f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: minority_f1
+    grid:
+      - 0.10
+      - 0.15
+      - 0.20
+      - 0.25
+      - 0.30
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+runtime:
+  prepared_dir: ../artifacts/prepared_vsb_fault_ssl_transfer_freeze_full
+  artifacts_dir: ../artifacts/runs

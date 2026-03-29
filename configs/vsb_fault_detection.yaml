@@ -1,0 +1,39 @@
+dataset:
+  name: vsb_power_line_fault
+  schema: tabular
+  input_path: ../data/vsb-power-line-fault-detection::max_signals=256::max_timesteps=200000::seed=42
+  label_column: target
+task:
+  type: classification
+  task_name: vsb_fault_detection_smoke
+  target_column: target
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - id_measurement
+features:
+  method: hybrid
+  top_k: 30
+model:
+  name: auto
+  candidates:
+    - random_forest
+    - extra_trees
+    - logistic_regression
+  epochs: 5
+  batch_size: 64
+  learning_rate: 0.001
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_vsb_fault_detection
+  artifacts_dir: ../artifacts/runs

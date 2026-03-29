@@ -1,0 +1,80 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: presence
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Signal_Strength
+    - PU_bandwidth
+    - PU_drift_type
+tasks:
+  - name: presence
+    task_name: presence
+    target_column: PU_Presence
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Signal_Strength
+      - PU_bandwidth
+      - PU_drift_type
+  - name: band
+    task_name: band
+    target_column: Frequency_Band
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Presence
+      - PU_drift_type
+  - name: burst
+    task_name: burst
+    target_column: PU_burst_duration
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Presence
+      - PU_drift_type
+      - power_dB
+features:
+  method: hybrid
+  top_k: 20
+model:
+  name: random_forest
+  mode: single_task
+  candidates:
+    - random_forest
+  epochs: 5
+  batch_size: 32
+benchmark:
+  matrix:
+    tasks:
+      - presence
+      - band
+      - burst
+    models:
+      - random_forest
+      - logistic_regression
+      - svc
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_paper_benchmark
+  artifacts_dir: ../artifacts/runs

@@ -1,0 +1,54 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: Frequency_Band
+task:
+  type: classification
+  task_name: frequency_band_aux
+  target_column: Frequency_Band
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Presence
+    - PU_drift_type
+    - PU_burst_duration
+    - freq_bin
+features:
+  method: hybrid
+  top_k: 20
+model:
+  name: auto
+  candidates:
+    - random_forest
+    - extra_trees
+    - logistic_regression
+    - svc
+  epochs: 5
+  batch_size: 32
+  learning_rate: 0.001
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+  ablation:
+    enabled: true
+    layouts:
+      - basic_only
+      - cov_flat_only
+      - temporal_cov_only
+      - all
+  risk_checks:
+    enabled: true
+    warning_threshold: 0.05
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_frequency_band
+  artifacts_dir: ../artifacts/runs

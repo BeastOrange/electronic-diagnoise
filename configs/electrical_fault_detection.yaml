@@ -1,0 +1,26 @@
+dataset:
+  name: electrical_fault_detection
+  schema: tabular
+  input_path: ../data/Electrical Fault detection and classification/detect_dataset.csv
+  label_column: Output (S)
+task:
+  type: classification
+features:
+  method: hybrid
+  top_k: 6
+model:
+  name: random_forest
+  epochs: 5
+  batch_size: 32
+  learning_rate: 0.001
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+runtime:
+  prepared_dir: ../artifacts/prepared_electrical_fault
+  artifacts_dir: ../artifacts/runs

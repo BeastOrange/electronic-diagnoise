@@ -1,0 +1,85 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: presence
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Signal_Strength
+    - PU_bandwidth
+    - PU_drift_type
+tasks:
+  - name: presence
+    task_name: presence
+    target_column: PU_Presence
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Signal_Strength
+      - PU_bandwidth
+      - PU_drift_type
+  - name: band
+    task_name: band
+    target_column: Frequency_Band
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Presence
+      - PU_drift_type
+features:
+  method: hybrid
+  top_k: 20
+model:
+  name: cnn_1d
+  mode: single_task
+  epochs: 20
+  batch_size: 32
+  learning_rate: 0.001
+  dropout: 0.2
+  weight_decay: 0.0001
+  patience: 5
+  scheduler: plateau
+  sequence_layout: temporal_cov_only
+  transfer:
+    enabled: true
+    from_run_dir: ../artifacts/runs/REPLACE_WITH_TRANSFER_SOURCE_RUN_DIR
+    strategy: freeze
+benchmark:
+  matrix:
+    tasks:
+      - presence
+      - band
+    models:
+      - cnn_1d
+    seeds:
+      - 7
+      - 11
+    modes:
+      - single_task
+      - pretrain
+    transfer_strategies:
+      - scratch
+      - freeze
+      - finetune
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_paper_benchmark_extended
+  artifacts_dir: ../artifacts/runs

@@ -1,0 +1,84 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: presence
+  target_column: PU_Presence
+  metric_primary: f1
+  metric_secondary: accuracy
+  drop_leakage_columns:
+    - time_index
+    - PU_burst_duration
+    - Frequency_Band
+    - PU_drift_type
+tasks:
+  - name: presence
+    task_name: presence
+    target_column: PU_Presence
+    metric_primary: f1
+    metric_secondary: accuracy
+    drop_leakage_columns:
+      - time_index
+      - PU_burst_duration
+      - Frequency_Band
+      - PU_drift_type
+features:
+  method: basic
+  top_k: 16
+model:
+  name: svc
+  mode: single_task
+  epochs: 120
+  batch_size: 64
+  learning_rate: 0.0005
+  dropout: 0.2
+  weight_decay: 0.0001
+  patience: 20
+  scheduler: plateau
+  class_weighting: balanced
+  hidden_dim: 256
+  num_heads: 8
+  params:
+    C: 2.0
+    gamma: scale
+    probability: true
+benchmark:
+  matrix:
+    tasks:
+      - presence
+    models:
+      - svc
+      - cognitive_radio_scalar_hybrid
+      - cognitive_radio_hybrid
+    seeds:
+      - 42
+      - 52
+      - 62
+    modes:
+      - single_task
+    transfer_strategies:
+      - scratch
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_presence_model_benchmark
+  artifacts_dir: ../artifacts/runs

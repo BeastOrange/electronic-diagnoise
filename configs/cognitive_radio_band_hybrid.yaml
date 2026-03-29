@@ -1,0 +1,46 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: Frequency_Band
+task:
+  type: classification
+  task_name: cognitive_band_hybrid
+  target_column: Frequency_Band
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Presence
+    - PU_drift_type
+    - PU_burst_duration
+features:
+  method: hybrid
+  top_k: full
+model:
+  name: cognitive_radio_hybrid
+  mode: single_task
+  epochs: 80
+  batch_size: 64
+  learning_rate: 0.0005
+  dropout: 0.2
+  weight_decay: 0.0001
+  patience: 14
+  scheduler: plateau
+  class_weighting: balanced
+  hidden_dim: 256
+  num_heads: 8
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_band_hybrid
+  artifacts_dir: ../artifacts/runs

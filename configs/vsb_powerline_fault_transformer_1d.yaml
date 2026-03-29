@@ -1,0 +1,76 @@
+dataset:
+  name: vsb_powerline_fault
+  schema: tabular
+  input_path: ../data/vsb-power-line-fault-detection::max_signals=384::max_timesteps=200000::seed=42
+  label_column: target
+task:
+  type: classification
+  task_name: vsb_fault_transformer_1d_main
+  target_column: target
+  metric_primary: f1
+  metric_secondary: precision
+  drop_leakage_columns:
+    - signal_id
+    - id_measurement
+features:
+  method: hybrid
+  top_k: 64
+model:
+  name: transformer_1d
+  candidates:
+    - transformer_1d
+    - cnn_1d
+    - extra_trees
+    - bagged_logistic_regression
+  epochs: 90
+  batch_size: 48
+  learning_rate: 0.0003
+  dropout: 0.25
+  weight_decay: 0.001
+  patience: 14
+  scheduler: plateau
+  scheduler_kwargs:
+    factor: 0.5
+    patience: 5
+    min_lr: 0.000005
+  class_weighting: balanced
+  sequence_layout: all
+trainer:
+  train_ratio: 0.75
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.20
+      - 0.25
+      - 0.30
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+  cross_validation:
+    enabled: true
+    folds: 5
+  learning_curve:
+    enabled: true
+    train_sizes:
+      - 0.2
+      - 0.4
+      - 0.6
+      - 0.8
+      - 1.0
+  risk_checks:
+    enabled: true
+    warning_threshold: 0.08
+runtime:
+  prepared_dir: ../artifacts/prepared_vsb_fault_transformer_1d
+  artifacts_dir: ../artifacts/runs

@@ -1,0 +1,53 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: pu_presence_main
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_bandwidth
+    - PU_burst_duration
+    - Frequency_Band
+features:
+  method: hybrid
+  top_k: 20
+model:
+  name: auto
+  candidates:
+    - bagged_logistic_regression
+    - extra_trees
+    - svc
+    - mlp_classifier
+    - random_forest
+    - logistic_regression
+  epochs: 5
+  batch_size: 32
+  learning_rate: 0.001
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.35
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_presence
+  artifacts_dir: ../artifacts/runs

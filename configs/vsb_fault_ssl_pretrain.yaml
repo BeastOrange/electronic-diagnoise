@@ -1,0 +1,46 @@
+dataset:
+  name: vsb_powerline_fault
+  schema: tabular
+  input_path: ../data/vsb-power-line-fault-detection::max_signals=8712::max_timesteps=200000::seed=42
+  label_column: target
+task:
+  type: classification
+  task_name: vsb_fault_ssl_pretrain
+  target_column: target
+  metric_primary: f1
+  metric_secondary: precision
+  drop_leakage_columns:
+    - signal_id
+    - id_measurement
+features:
+  method: hybrid
+  top_k: 48
+model:
+  name: cnn_1d
+  mode: pretrain
+  epochs: 20
+  batch_size: 64
+  learning_rate: 0.0005
+  dropout: 0.25
+  weight_decay: 0.0005
+  patience: 6
+  sequence_layout: all
+  pretrain:
+    enabled: true
+    objective: masked_reconstruction
+    checkpoint_name: pretrain_encoder.pt
+    mask_ratio: 0.15
+trainer:
+  train_ratio: 0.75
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_vsb_fault_ssl_pretrain_full
+  artifacts_dir: ../artifacts/runs

@@ -1,0 +1,44 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_drift_type
+task:
+  type: classification
+  task_name: pu_drift_type_mid
+  target_column: PU_drift_type
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Presence
+    - PU_bandwidth
+    - PU_burst_duration
+    - Frequency_Band
+features:
+  method: hybrid
+  top_k: 40
+model:
+  name: auto
+  candidates:
+    - extra_trees
+    - svc
+    - mlp_classifier
+    - random_forest
+  epochs: 5
+  batch_size: 32
+  learning_rate: 0.001
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_drift_type
+  artifacts_dir: ../artifacts/runs
