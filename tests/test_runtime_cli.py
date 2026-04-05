@@ -104,6 +104,41 @@ def _write_cnn_config(config_path: Path, raw_data_path: Path, prepared_dir: Path
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
+def _write_simple_auto_config(config_path: Path, raw_data_path: Path, prepared_dir: Path) -> None:
+    config = {
+        "dataset": {
+            "name": "synthetic_binary_auto",
+            "schema": "tabular",
+            "input_path": str(raw_data_path),
+            "label_column": "label",
+        },
+        "task": {
+            "type": "classification",
+            "task_name": "synthetic_binary_auto",
+            "target_column": "label",
+            "metric_primary": "accuracy",
+            "metric_secondary": "f1",
+            "drop_leakage_columns": [],
+        },
+        "features": {"method": "hybrid", "top_k": 4},
+        "model": {
+            "name": "auto",
+            "candidates": ["bagged_logistic_regression", "logistic_regression", "random_forest"],
+            "epochs": 2,
+            "batch_size": 8,
+        },
+        "trainer": {"train_ratio": 0.7, "val_ratio": 0.15, "random_state": 9},
+        "metrics": {"primary": "accuracy"},
+        "visualization": {"theme": "paper-bar"},
+        "evaluation": {"threshold_tuning": {"enabled": True, "metric": "f1", "grid": [0.4, 0.5, 0.6]}},
+        "runtime": {
+            "prepared_dir": str(prepared_dir),
+            "artifacts_dir": str(prepared_dir / "artifacts"),
+        },
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
 def _write_deep_config(
     config_path: Path,
     raw_data_path: Path,
@@ -875,6 +910,23 @@ def test_prepare_command_exports_exploration_assets(tmp_path: Path) -> None:
     assert (prepared_dir / "exploration_summary.md").exists()
 
 
+def test_prepare_command_prints_output_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    raw_data_path = tmp_path / "synthetic.csv"
+    prepared_dir = tmp_path / "prepared_assets"
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, raw_data_path, prepared_dir)
+    _write_synthetic_tabular_dataset(raw_data_path)
+
+    assert main(["prepare", "--config", str(config_path)]) == 0
+
+    out = capsys.readouterr().out
+    assert "[prepare] output_dir=" in out
+    assert "metadata.json" in out
+    assert "statistics.json" in out
+    assert "prepared_splits.npz" in out
+    assert "exploration_summary.md" in out
+
+
 def test_extract_features_command_exports_feature_assets(tmp_path: Path) -> None:
     raw_data_path = tmp_path / "synthetic.csv"
     prepared_dir = tmp_path / "prepared_assets"
@@ -889,6 +941,27 @@ def test_extract_features_command_exports_feature_assets(tmp_path: Path) -> None
     assert (prepared_dir / "tables" / "selected_features.csv").exists()
     summary_text = (prepared_dir / "exploration_summary.md").read_text(encoding="utf-8")
     assert "Feature Analysis" in summary_text
+
+
+def test_extract_features_command_prints_output_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw_data_path = tmp_path / "synthetic.csv"
+    prepared_dir = tmp_path / "prepared_assets"
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path, raw_data_path, prepared_dir)
+    _write_synthetic_tabular_dataset(raw_data_path)
+
+    assert main(["prepare", "--config", str(config_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["extract-features", "--config", str(config_path)]) == 0
+
+    out = capsys.readouterr().out
+    assert "[extract-features] output_dir=" in out
+    assert "feature_metadata.json" in out
+    assert "feature_importance.csv" in out
+    assert "selected_features.csv" in out
 
 
 def test_train_command_supports_noise_robustness_with_feature_selection(tmp_path: Path) -> None:
@@ -935,6 +1008,68 @@ def test_train_command_supports_noise_robustness_with_feature_selection(tmp_path
     assert run_dirs
     run_dir = run_dirs[-1]
     assert (run_dir / "tables" / "robustness_noise.csv").exists()
+
+
+def test_train_command_prints_output_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    raw_data_path = tmp_path / "synthetic.csv"
+    prepared_dir = tmp_path / "prepared"
+    config_path = tmp_path / "config.yaml"
+    _write_synthetic_tabular_dataset(raw_data_path)
+    _write_config(config_path, raw_data_path, prepared_dir)
+
+    assert main(["prepare", "--config", str(config_path)]) == 0
+    assert main(["extract-features", "--config", str(config_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["train", "--config", str(config_path), "--device", "cpu"]) == 0
+    out = capsys.readouterr().out
+    assert "[train] completed run_dir=" in out
+    assert "metrics.json" in out
+    assert "predictions.csv" in out
+    assert "run_config.yaml" in out
+
+
+def test_quickstart_creates_latest_dirs_and_curated_outputs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw_data_path = tmp_path / "synthetic_binary.csv"
+    config_path = tmp_path / "quickstart.yaml"
+    _write_synthetic_binary_dataset(raw_data_path)
+    _write_simple_auto_config(config_path, raw_data_path, tmp_path / "ignored_prepared")
+
+    output_root = tmp_path / "simple_outputs"
+    assert (
+        main(
+            [
+                "quickstart",
+                "--config",
+                str(config_path),
+                "--device",
+                "cpu",
+                "--output-root",
+                str(output_root),
+            ]
+        )
+        == 0
+    )
+
+    latest_prepared = output_root / "latest_prepared"
+    latest_run = output_root / "latest_run"
+    assert latest_prepared.exists()
+    assert latest_run.exists()
+    assert (latest_prepared / "metadata.json").exists()
+    assert (latest_prepared / "exploration_summary.md").exists()
+    assert (latest_run / "metrics.json").exists()
+    assert (latest_run / "summary.md").exists()
+    assert (latest_run / "figures" / "confusion_matrix.png").exists()
+    assert (latest_run / "figures" / "metrics_overview.png").exists()
+    assert not any((latest_run / "figures").glob("*.svg"))
+    assert len(list((latest_run / "figures").glob("*.png"))) <= 4
+
+    out = capsys.readouterr().out
+    assert "[quickstart] latest_prepared=" in out
+    assert "[quickstart] latest_run=" in out
+    assert "summary.md" in out
 
 
 def test_cli_train_supports_multitask_cnn_config(tmp_path: Path) -> None:

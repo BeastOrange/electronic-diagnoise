@@ -59,6 +59,7 @@ def _save_artifacts(
     png = output_dir / f"{stem}.png"
     svg = output_dir / f"{stem}.svg"
     csv = output_dir / f"{stem}.csv"
+    fig.tight_layout()
     fig.savefig(png, bbox_inches="tight")
     fig.savefig(svg, bbox_inches="tight")
     data.to_csv(csv, index=False)
@@ -104,24 +105,27 @@ def plot_feature_importance(
     feature_df: pd.DataFrame, output_dir: Path, theme_name: str = "paper-bar"
 ) -> dict[str, Path]:
     theme = _resolve_theme(theme_name)
-    ordered = feature_df.sort_values("importance", ascending=False)
-    fig, ax = plt.subplots(figsize=(7, 4.2), dpi=theme["dpi"])
-    colors = [theme["palette"][i % len(theme["palette"])] for i in range(len(ordered))]
-    bars = ax.bar(ordered["feature"], ordered["importance"], color=colors, edgecolor="#4F5562")
-    for bar, value in zip(bars, ordered["importance"].tolist(), strict=False):
+    ordered = feature_df.sort_values("importance", ascending=False).reset_index(drop=True)
+    plotted = ordered.head(min(12, len(ordered))).copy()
+    figure_height = max(4.2, 0.48 * max(4, len(plotted)))
+    fig, ax = plt.subplots(figsize=(8.6, figure_height), dpi=theme["dpi"])
+    colors = [theme["palette"][i % len(theme["palette"])] for i in range(len(plotted))]
+    bars = ax.barh(plotted["feature"], plotted["importance"], color=colors, edgecolor="#4F5562")
+    for bar, value in zip(bars, plotted["importance"].tolist(), strict=False):
         ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            bar.get_height(),
+            bar.get_width(),
+            bar.get_y() + bar.get_height() / 2.0,
             f"{value:.3f}",
-            ha="center",
-            va="bottom",
+            ha="left",
+            va="center",
             fontsize=theme["tick_size"],
         )
-    ax.set_title("Feature Importance", fontsize=theme["title_size"])
-    ax.set_xlabel("Feature", fontsize=theme["label_size"])
-    ax.set_ylabel("Importance", fontsize=theme["label_size"])
-    ax.tick_params(axis="x", labelrotation=30)
-    return _save_artifacts(fig, ordered, output_dir, "feature_importance")
+    ax.invert_yaxis()
+    ax.set_title("Feature Importance (Top Features)", fontsize=theme["title_size"])
+    ax.set_xlabel("Importance", fontsize=theme["label_size"])
+    ax.set_ylabel("Feature", fontsize=theme["label_size"])
+    ax.tick_params(axis="y", labelsize=max(theme["tick_size"] - 1, 8))
+    return _save_artifacts(fig, plotted, output_dir, "feature_importance")
 
 
 def plot_training_curves(
@@ -191,6 +195,19 @@ def plot_confusion_matrix(
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
             ax.text(j, i, str(int(cm[i, j])), ha="center", va="center", color="black")
+    missing_predictions = [
+        labels[index]
+        for index, total in enumerate(np.asarray(cm).sum(axis=0).tolist())
+        if float(total) == 0.0 and index < len(labels)
+    ]
+    if missing_predictions:
+        fig.text(
+            0.02,
+            0.01,
+            "Warning: never predicted -> " + ", ".join(str(item) for item in missing_predictions),
+            fontsize=max(theme["tick_size"] - 1, 8),
+            color="#8B0000",
+        )
     cm_df = pd.DataFrame(cm, index=labels, columns=labels).reset_index(names="actual")
     return _save_artifacts(fig, cm_df, output_dir, "confusion_matrix")
 
@@ -266,6 +283,12 @@ def plot_per_class_metrics(
         value_name="score",
     )
     pivot = melted.pivot(index=label_col, columns="metric", values="score").reset_index()
+    support_map = {}
+    if "support" in data.columns:
+        support_map = {
+            str(row[label_col]): int(row["support"])
+            for _, row in data[[label_col, "support"]].iterrows()
+        }
 
     x = np.arange(len(pivot))
     width = 0.24
@@ -290,7 +313,11 @@ def plot_per_class_metrics(
                 fontsize=theme["tick_size"] - 1,
             )
     ax.set_xticks(x)
-    ax.set_xticklabels(pivot[label_col].tolist(), rotation=25)
+    axis_labels = [
+        f"{label}\n(n={support_map.get(str(label), 0)})"
+        for label in pivot[label_col].tolist()
+    ]
+    ax.set_xticklabels(axis_labels, rotation=0)
     ax.set_ylim(0.0, max(1.0, float(melted["score"].max()) + 0.1))
     ax.set_title("Per-Class Metrics", fontsize=theme["title_size"])
     ax.set_xlabel("Class", fontsize=theme["label_size"])

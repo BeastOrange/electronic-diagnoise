@@ -41,6 +41,21 @@ function Ensure-Kaggle {
     }
 }
 
+function Set-NumericThreadDefaults {
+    $threadVars = @(
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "BLIS_NUM_THREADS"
+    )
+    foreach ($name in $threadVars) {
+        if (-not (Get-Item "Env:$name" -ErrorAction SilentlyContinue)) {
+            Set-Item -Path "Env:$name" -Value "1"
+        }
+    }
+}
+
 function Resolve-ProjectRoot($InputPath) {
     return (Resolve-Path $InputPath).Path
 }
@@ -53,6 +68,10 @@ function Download-CognitiveDataset($RootPath, $Slug) {
     Get-ChildItem $dataDir -Filter "*.zip" | ForEach-Object {
         Expand-Archive -Path $_.FullName -DestinationPath $dataDir -Force
     }
+}
+
+function Get-CognitiveDatasetPath($RootPath) {
+    return (Join-Path $RootPath "data\Cognitive Radio Spectrum Sensing Dataset.csv")
 }
 
 function Download-VSB($RootPath, $CompetitionId) {
@@ -70,12 +89,19 @@ Set-Location $root
 
 Step "Project root: $root"
 Ensure-Uv
+Step "Configuring numeric runtime defaults for Windows..."
+Set-NumericThreadDefaults
 Step "Syncing dependencies..."
 uv sync --dev
 
 if ($DatasetSource -eq "auto" -or $DatasetSource -eq "kaggle" -or $DatasetSource -eq "cognitive") {
-    Ensure-Kaggle
-    Download-CognitiveDataset -RootPath $root -Slug $KaggleDataset
+    $localDataset = Get-CognitiveDatasetPath -RootPath $root
+    if (Test-Path $localDataset) {
+        Step "Using existing local Cognitive Radio dataset: $localDataset"
+    } else {
+        Ensure-Kaggle
+        Download-CognitiveDataset -RootPath $root -Slug $KaggleDataset
+    }
 }
 
 if ($IncludeVSB) {
@@ -84,10 +110,8 @@ if ($IncludeVSB) {
 }
 
 if ($RunPipeline) {
-    Step "Running Cognitive Radio CNN-first pipeline..."
-    uv run python -m emc_diag prepare --config configs/cognitive_radio_presence_cnn.yaml
-    uv run python -m emc_diag extract-features --config configs/cognitive_radio_presence_cnn.yaml
-    uv run python -m emc_diag train --config configs/cognitive_radio_presence_cnn.yaml --device auto
+    Step "Running quickstart pipeline..."
+    uv run python -m emc_diag quickstart --device auto --output-root artifacts
 }
 
 Step "Bootstrap completed."

@@ -198,6 +198,22 @@ def test_stage_plots_export_png_svg_and_csv(tmp_path: Path) -> None:
     assert spectrum_paths["csv"].exists()
 
 
+def test_feature_importance_plot_limits_rows_for_readability(tmp_path: Path) -> None:
+    feature_df = pd.DataFrame(
+        {
+            "feature": [f"very_long_feature_name_{index}" for index in range(20)],
+            "importance": np.linspace(0.99, 0.1, 20),
+        }
+    )
+
+    paths = plot_feature_importance(feature_df, tmp_path, theme_name="paper-bar")
+    plotted = pd.read_csv(paths["csv"])
+
+    assert len(plotted) <= 12
+    assert plotted.iloc[0]["feature"] == "very_long_feature_name_0"
+    assert plotted.iloc[-1]["importance"] <= plotted.iloc[0]["importance"]
+
+
 def test_new_visualization_plots_create_artifacts(tmp_path: Path) -> None:
     # noise robustness
     noise_df = pd.DataFrame({"noise_sigma": [0.0, 0.05, 0.1], "macro_f1": [0.72, 0.68, 0.55]})

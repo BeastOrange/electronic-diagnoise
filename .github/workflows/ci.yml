@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run test suite
+        run: uv run pytest -q
+
+  windows-smoke:
+    runs-on: windows-latest
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run focused Windows tests
+        run: |
+          uv run pytest -q tests/test_bootstrap.py
+          uv run pytest -q tests/test_runtime_cli.py::test_quickstart_creates_latest_dirs_and_curated_outputs
+        shell: pwsh
+
+      - name: Run quickstart smoke
+        run: uv run python -m emc_diag quickstart --device cpu --output-root ci_artifacts
+        shell: pwsh
+
+      - name: Verify quickstart outputs
+        run: |
+          Test-Path .\ci_artifacts\latest_prepared\metadata.json
+          Test-Path .\ci_artifacts\latest_run\metrics.json
+          Test-Path .\ci_artifacts\latest_run\summary.md
+        shell: pwsh
+
+      - name: Run Windows bootstrap smoke
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap_windows.ps1 -ProjectRoot "." -DatasetSource auto -RunPipeline
+        shell: pwsh
+
+      - name: Verify bootstrap outputs
+        run: |
+          Test-Path .\artifacts\latest_prepared\metadata.json
+          Test-Path .\artifacts\latest_run\metrics.json
+          Test-Path .\artifacts\latest_run\summary.md
+        shell: pwsh

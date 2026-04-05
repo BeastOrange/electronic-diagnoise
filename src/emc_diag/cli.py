@@ -4,10 +4,15 @@ import argparse
 from copy import deepcopy
 import inspect
 from pathlib import Path
+import shutil
 import sys
 from tempfile import TemporaryDirectory
 import time
 from typing import Any, Callable
+
+from emc_diag.bootstrap import configure_numeric_runtime_defaults
+
+configure_numeric_runtime_defaults()
 
 import numpy as np
 import pandas as pd
@@ -31,28 +36,156 @@ from emc_diag.feature_engineering import (
     make_feature_group_view,
     make_prepared_layout_view,
 )
-from emc_diag.modeling import (
-    pretrain_cnn_encoder,
-    train_baseline_model,
-    train_cognitive_radio_hybrid_model,
-    train_cognitive_radio_scalar_hybrid_model,
-    train_multitask_cognitive_radio_hybrid_model,
-    train_cnn_lstm_model,
-    train_cnn_model,
-    train_cnn_residual_model,
-    train_multitask_cnn_model,
-    train_transformer_1d_model,
-)
 from emc_diag.runtime import ensure_dir, resolve_device, timestamp_tag
 
-try:
-    from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
-except Exception:  # pragma: no cover
-    StratifiedKFold = None
-    StratifiedShuffleSplit = None
-
-
 DEEP_MODEL_NAMES = {"cnn_1d", "cnn_1d_residual", "cnn_lstm", "transformer_1d", "cognitive_radio_hybrid", "cognitive_radio_scalar_hybrid"}
+QUICKSTART_DEFAULT_CONFIG = "configs/cognitive_radio_spectrum.yaml"
+QUICKSTART_CORE_RUN_FILES: tuple[tuple[str, str], ...] = (
+    ("metrics.json", "model metrics and key scores"),
+    ("predictions.csv", "per-sample predictions"),
+    ("summary.md", "human-readable run summary"),
+    ("figures/confusion_matrix.png", "confusion matrix figure"),
+    ("figures/metrics_overview.png", "overall metrics figure"),
+    ("figures/per_class_metrics.png", "per-class performance figure"),
+    ("figures/candidate_comparison.png", "candidate model comparison"),
+    ("tables/per_class_metrics.csv", "per-class metrics table"),
+    ("tables/candidate_scores.csv", "candidate score table"),
+)
+QUICKSTART_CORE_PREPARED_FILES: tuple[tuple[str, str], ...] = (
+    ("metadata.json", "prepared dataset metadata"),
+    ("statistics.json", "dataset class counts and statistics"),
+    ("exploration_summary.md", "human-readable preparation summary"),
+    ("figures/dataset_summary.png", "class distribution figure"),
+    ("figures/feature_importance.png", "top feature importance figure"),
+    ("tables/class_distribution.csv", "class distribution table"),
+    ("tables/dataset_statistics.csv", "dataset statistics table"),
+    ("tables/selected_features.csv", "selected feature list"),
+)
+
+
+def _load_modeling_module() -> Any:
+    from emc_diag import modeling as modeling_module
+
+    return modeling_module
+
+
+def _get_model_selection_classes() -> tuple[Any, Any]:
+    try:
+        from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
+    except Exception:  # pragma: no cover
+        return None, None
+    return StratifiedKFold, StratifiedShuffleSplit
+
+
+def _reset_dir(path: Path) -> Path:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _copy_if_exists(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
+    ensure_dir(target.parent)
+    shutil.copy2(source, target)
+
+
+def _curate_output_dir(source_dir: Path, target_dir: Path, file_specs: tuple[tuple[str, str], ...]) -> Path:
+    _reset_dir(target_dir)
+    for relative_path, _ in file_specs:
+        _copy_if_exists(source_dir / relative_path, target_dir / relative_path)
+    return target_dir
+
+
+def _existing_file_specs(base_dir: Path, file_specs: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
+    return [
+        (relative_path, description)
+        for relative_path, description in file_specs
+        if (base_dir / relative_path).exists()
+    ]
+
+
+def _prediction_collapse_warning(metrics: dict[str, Any]) -> str | None:
+    raw_matrix = metrics.get("confusion_matrix")
+    if raw_matrix is None:
+        return None
+    matrix = np.asarray(raw_matrix)
+    if matrix.ndim != 2 or matrix.size == 0:
+        return None
+    empty_columns = np.flatnonzero(matrix.sum(axis=0) == 0)
+    if empty_columns.size == 0:
+        return None
+    labels = [str(item) for item in metrics.get("label_names", metrics.get("labels", []))]
+    missing_labels = [
+        labels[index] if index < len(labels) else str(index)
+        for index in empty_columns.tolist()
+    ]
+    return "warning: classes never predicted -> " + ", ".join(missing_labels)
+
+
+def _print_completion_summary(
+    command_name: str,
+    output_dir: Path,
+    file_specs: tuple[tuple[str, str], ...],
+    metrics: dict[str, Any] | None = None,
+    next_command: str | None = None,
+) -> None:
+    resolved_output_dir = output_dir.resolve()
+    print(f"[{command_name}] output_dir={resolved_output_dir}", flush=True)
+    if metrics:
+        metric_tokens: list[str] = []
+        for key in ("model_name", "accuracy", "f1", "macro_f1"):
+            if key not in metrics:
+                continue
+            value = metrics[key]
+            if isinstance(value, float):
+                metric_tokens.append(f"{key}={value:.4f}")
+            else:
+                metric_tokens.append(f"{key}={value}")
+        if metric_tokens:
+            print(f"[{command_name}] metrics: " + ", ".join(metric_tokens), flush=True)
+        warning = _prediction_collapse_warning(metrics)
+        if warning:
+            print(f"[{command_name}] {warning}", flush=True)
+
+    existing_specs = _existing_file_specs(output_dir, file_specs)
+    if existing_specs:
+        print(f"[{command_name}] generated:", flush=True)
+        for relative_path, description in existing_specs:
+            print(f"- {relative_path}: {description}", flush=True)
+    if next_command:
+        print(f"[{command_name}] next: {next_command}", flush=True)
+
+
+def _prepare_quickstart_config(config: dict[str, Any], output_root: Path) -> dict[str, Any]:
+    quickstart_config = deepcopy(config)
+    prepared_work_dir = (output_root / "prepared_work").resolve()
+    runs_history_dir = (output_root / "runs_history").resolve()
+    latest_prepared_dir = (output_root / "latest_prepared").resolve()
+    latest_run_dir = (output_root / "latest_run").resolve()
+
+    for path in (prepared_work_dir, latest_prepared_dir, latest_run_dir):
+        if path.exists():
+            shutil.rmtree(path)
+
+    quickstart_config.setdefault("runtime", {})
+    quickstart_config["runtime"]["prepared_dir"] = str(prepared_work_dir)
+    quickstart_config["runtime"]["artifacts_dir"] = str(runs_history_dir)
+
+    quickstart_config.setdefault("visualization", {})
+    quickstart_config["visualization"]["theme"] = str(
+        quickstart_config["visualization"].get("theme", "paper-bar")
+    )
+    quickstart_config["visualization"]["profile"] = "concise"
+
+    evaluation = quickstart_config.setdefault("evaluation", {})
+    for section_name in ("cross_validation", "learning_curve", "ablation"):
+        section = evaluation.get(section_name)
+        if isinstance(section, dict):
+            section["enabled"] = False
+
+    return quickstart_config
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -83,6 +216,11 @@ def _build_parser() -> argparse.ArgumentParser:
     export_report = subparsers.add_parser("export-report")
     export_report.add_argument("--run-dir", required=True)
     export_report.add_argument("--format", choices=["md", "csv", "png", "svg"], default="md")
+
+    quickstart = subparsers.add_parser("quickstart")
+    quickstart.add_argument("--config", default=QUICKSTART_DEFAULT_CONFIG)
+    quickstart.add_argument("--device", default="auto")
+    quickstart.add_argument("--output-root", default="artifacts")
 
     benchmark = subparsers.add_parser("benchmark")
     benchmark.add_argument("--configs", nargs="+", required=True)
@@ -1241,6 +1379,7 @@ def _execute_training(
     layout_override: str | None = None,
     progress: bool = False,
 ) -> dict[str, Any]:
+    modeling = _load_modeling_module()
     run_mode = str(config["model"].get("mode", "single_task"))
     prepared_effective = _apply_feature_group_view_if_enabled(config, prepared)
     label_names = list(prepared_effective["metadata"].get("labels", []))
@@ -1256,7 +1395,7 @@ def _execute_training(
         start = time.perf_counter()
         pretrain_config = config["model"].get("pretrain", {})
         result = _call_with_batch_backoff(
-            pretrain_cnn_encoder,
+            modeling.pretrain_cnn_encoder,
             config,
             x_train=training_splits["train"]["X"],
             x_val=training_splits["val"]["X"],
@@ -1310,7 +1449,7 @@ def _execute_training(
             }
             start = time.perf_counter()
             result = _call_with_batch_backoff(
-                train_multitask_cognitive_radio_hybrid_model,
+                modeling.train_multitask_cognitive_radio_hybrid_model,
                 config,
                 scalar_train=training_splits["train"]["scalar_X"],
                 cov_train=training_splits["train"]["cov_X"],
@@ -1438,7 +1577,7 @@ def _execute_training(
         }
         start = time.perf_counter()
         result = _call_with_batch_backoff(
-            train_multitask_cnn_model,
+            modeling.train_multitask_cnn_model,
             config,
             x_train=training_splits["train"]["X"],
             y_train_tasks=training_splits["train"]["y_tasks"],
@@ -1561,7 +1700,7 @@ def _execute_training(
     start = time.perf_counter()
     if config["model"]["name"] == "cognitive_radio_hybrid":
         result = _call_with_batch_backoff(
-            train_cognitive_radio_hybrid_model,
+            modeling.train_cognitive_radio_hybrid_model,
             config,
             scalar_train=training_splits["train"]["scalar_X"],
             cov_train=training_splits["train"]["cov_X"],
@@ -1590,7 +1729,7 @@ def _execute_training(
         resolved_device = result["resolved_device"]
     elif config["model"]["name"] == "cognitive_radio_scalar_hybrid":
         result = _call_with_batch_backoff(
-            train_cognitive_radio_scalar_hybrid_model,
+            modeling.train_cognitive_radio_scalar_hybrid_model,
             config,
             scalar_train=training_splits["train"]["scalar_X"],
             cov_train=training_splits["train"]["cov_X"],
@@ -1619,10 +1758,10 @@ def _execute_training(
         resolved_device = result["resolved_device"]
     elif _is_deep_model_name(config["model"]["name"]):
         deep_trainers: dict[str, Callable[..., Any]] = {
-            "cnn_1d": train_cnn_model,
-            "cnn_1d_residual": train_cnn_residual_model,
-            "cnn_lstm": train_cnn_lstm_model,
-            "transformer_1d": train_transformer_1d_model,
+            "cnn_1d": modeling.train_cnn_model,
+            "cnn_1d_residual": modeling.train_cnn_residual_model,
+            "cnn_lstm": modeling.train_cnn_lstm_model,
+            "transformer_1d": modeling.train_transformer_1d_model,
         }
         trainer = deep_trainers[config["model"]["name"]]
         result = _call_with_batch_backoff(
@@ -1661,7 +1800,7 @@ def _execute_training(
         resolved_device = result["resolved_device"]
     else:
         result = _call_with_supported_kwargs(
-            train_baseline_model,
+            modeling.train_baseline_model,
             x_train=training_splits["train"]["X"],
             y_train=training_splits["train"]["y"],
             x_val=training_splits["val"]["X"],
@@ -1906,6 +2045,7 @@ def _cross_validation_analysis(config: dict[str, Any], requested_device: str) ->
     cv_config = config.get("evaluation", {}).get("cross_validation", {})
     if not cv_config.get("enabled", False):
         return pd.DataFrame()
+    StratifiedKFold, StratifiedShuffleSplit = _get_model_selection_classes()
     if StratifiedKFold is None or StratifiedShuffleSplit is None:
         return pd.DataFrame()
 
@@ -2198,18 +2338,22 @@ def _visualize_run(run_dir: Path, theme_name: str) -> None:
     metrics = load_json(run_dir / "metrics.json")
     feature_importance = pd.read_csv(run_dir / "tables" / "feature_importance.csv")
     run_mode = str(metrics.get("run_mode", run_config.get("model", {}).get("mode", "single_task")))
+    visualization_profile = str(run_config.get("visualization", {}).get("profile", "full")).lower()
+    concise_profile = visualization_profile in {"concise", "simple", "latest"}
     predictions = pd.read_csv(run_dir / "predictions.csv") if (run_dir / "predictions.csv").exists() else None
 
     dataset_rows = []
     for label, count in statistics["class_counts"].items():
         dataset_rows.extend([{"class": str(label)}] * int(count))
     dataset_df = pd.DataFrame(dataset_rows or [{"class": "unknown"}])
-    plot_dataset_summary(dataset_df=dataset_df, output_dir=run_dir / "figures", theme_name=theme_name)
-    plot_feature_importance(feature_importance, run_dir / "figures", theme_name)
+    if not concise_profile:
+        plot_dataset_summary(dataset_df=dataset_df, output_dir=run_dir / "figures", theme_name=theme_name)
+        plot_feature_importance(feature_importance, run_dir / "figures", theme_name)
 
     curve_df = _history_curve_frame(metrics, run_config)
-    plot_training_curves(curve_df, run_dir / "figures", theme_name)
-    if callable(plot_overfitting_gap):
+    if not concise_profile:
+        plot_training_curves(curve_df, run_dir / "figures", theme_name)
+    if callable(plot_overfitting_gap) and not concise_profile:
         plot_overfitting_gap(curve_df, run_dir / "figures", theme_name)
 
     if run_mode != "pretrain" and predictions is not None and "confusion_matrix" in metrics:
@@ -2225,12 +2369,18 @@ def _visualize_run(run_dir: Path, theme_name: str) -> None:
         plot_candidate_comparison(_candidate_scores_frame(metrics["candidate_scores"]), run_dir / "figures", theme_name)
     if callable(plot_per_class_metrics) and (run_dir / "tables" / "per_class_metrics.csv").exists():
         plot_per_class_metrics(pd.read_csv(run_dir / "tables" / "per_class_metrics.csv"), run_dir / "figures", theme_name)
-    if callable(plot_binary_curves) and predictions is not None and "score" in predictions.columns and metrics.get("roc_curve"):
+    if (
+        callable(plot_binary_curves)
+        and not concise_profile
+        and predictions is not None
+        and "score" in predictions.columns
+        and metrics.get("roc_curve")
+    ):
         roc_df = pd.DataFrame(metrics.get("roc_curve", []))
         pr_df = pd.DataFrame(metrics.get("pr_curve", []))
         plot_binary_curves(roc_df=roc_df, pr_df=pr_df, output_dir=run_dir / "figures", theme_name=theme_name)
     cv_aggregates: dict[str, float] | None = None
-    if callable(plot_cv_comparison) and (run_dir / "tables" / "cv_metrics.csv").exists():
+    if callable(plot_cv_comparison) and not concise_profile and (run_dir / "tables" / "cv_metrics.csv").exists():
         cv_metrics_raw = pd.read_csv(run_dir / "tables" / "cv_metrics.csv")
         cv_summary = _cv_summary_frame(cv_metrics_raw, metrics.get("model_name", "model"))
         if not cv_summary.empty:
@@ -2238,43 +2388,43 @@ def _visualize_run(run_dir: Path, theme_name: str) -> None:
             cv_aggregates = summarize_cv_aggregates(cv_summary.to_dict(orient="records"))
 
     ablation_notes: list[str] | None = None
-    if callable(plot_ablation_comparison) and (run_dir / "tables" / "ablation_metrics.csv").exists():
+    if callable(plot_ablation_comparison) and not concise_profile and (run_dir / "tables" / "ablation_metrics.csv").exists():
         ablation_raw = pd.read_csv(run_dir / "tables" / "ablation_metrics.csv")
         ablation_summary = _ablation_summary_frame(ablation_raw, metric_name=run_config["task"].get("metric_primary", "accuracy"))
         if not ablation_summary.empty:
             plot_ablation_comparison(ablation_summary, run_dir / "figures", theme_name)
             ablation_notes = build_ablation_notes(ablation_summary.to_dict(orient="records"))
-    if callable(plot_noise_robustness_curve) and (run_dir / "tables" / "robustness_noise.csv").exists():
+    if callable(plot_noise_robustness_curve) and not concise_profile and (run_dir / "tables" / "robustness_noise.csv").exists():
         plot_noise_robustness_curve(
             pd.read_csv(run_dir / "tables" / "robustness_noise.csv"),
             run_dir / "figures",
             theme_name,
         )
-    if callable(plot_feature_group_ablation) and (run_dir / "tables" / "feature_group_ablation.csv").exists():
+    if callable(plot_feature_group_ablation) and not concise_profile and (run_dir / "tables" / "feature_group_ablation.csv").exists():
         plot_feature_group_ablation(
             pd.read_csv(run_dir / "tables" / "feature_group_ablation.csv"),
             run_dir / "figures",
             theme_name,
         )
-    if callable(plot_transfer_vs_scratch) and (run_dir / "tables" / "transfer_vs_scratch.csv").exists():
+    if callable(plot_transfer_vs_scratch) and not concise_profile and (run_dir / "tables" / "transfer_vs_scratch.csv").exists():
         plot_transfer_vs_scratch(
             pd.read_csv(run_dir / "tables" / "transfer_vs_scratch.csv"),
             run_dir / "figures",
             theme_name,
         )
-    if callable(plot_multitask_vs_single_task) and (run_dir / "tables" / "multitask_vs_single_task.csv").exists():
+    if callable(plot_multitask_vs_single_task) and not concise_profile and (run_dir / "tables" / "multitask_vs_single_task.csv").exists():
         plot_multitask_vs_single_task(
             pd.read_csv(run_dir / "tables" / "multitask_vs_single_task.csv"),
             run_dir / "figures",
             theme_name,
         )
-    if callable(plot_task_comparison) and (run_dir / "tables" / "task_comparison.csv").exists():
+    if callable(plot_task_comparison) and not concise_profile and (run_dir / "tables" / "task_comparison.csv").exists():
         plot_task_comparison(
             pd.read_csv(run_dir / "tables" / "task_comparison.csv"),
             run_dir / "figures",
             theme_name,
         )
-    if callable(plot_ml_vs_cnn_comparison):
+    if callable(plot_ml_vs_cnn_comparison) and not concise_profile:
         family_rows = pd.DataFrame(
             [
                 {
@@ -2285,7 +2435,10 @@ def _visualize_run(run_dir: Path, theme_name: str) -> None:
             ]
         )
         plot_ml_vs_cnn_comparison(family_rows, run_dir / "figures", theme_name)
-    if dataset_metadata.get("task_name", "").startswith("vsb_") or str(run_config["dataset"].get("name", "")).startswith("vsb"):
+    if not concise_profile and (
+        dataset_metadata.get("task_name", "").startswith("vsb_")
+        or str(run_config["dataset"].get("name", "")).startswith("vsb")
+    ):
         try:
             waveform_preview = _load_vsb_waveform_preview(run_config)
             if callable(plot_waveform_overview):
@@ -2455,6 +2608,18 @@ def _handle_prepare(args: argparse.Namespace) -> int:
     prepared = _prepare_from_config(config)
     _save_prepared_bundle(prepared_dir, prepared)
     _export_prepared_exploration_assets(prepared_dir, prepared)
+    _print_completion_summary(
+        "prepare",
+        prepared_dir,
+        (
+            ("metadata.json", "prepared dataset metadata"),
+            ("statistics.json", "dataset class counts and statistics"),
+            ("scaler.json", "feature scaling parameters"),
+            ("prepared_splits.npz", "prepared train/val/test arrays"),
+            ("exploration_summary.md", "human-readable preparation summary"),
+        ),
+        next_command=f"uv run python -m emc_diag extract-features --config {args.config}",
+    )
     return 0
 
 
@@ -2469,6 +2634,18 @@ def _handle_extract_features(args: argparse.Namespace) -> int:
     )
     _save_feature_bundle(prepared_dir, feature_bundle)
     _export_feature_analysis_assets(prepared_dir, prepared, feature_bundle)
+    _print_completion_summary(
+        "extract-features",
+        prepared_dir,
+        (
+            ("feature_metadata.json", "feature extraction metadata"),
+            ("feature_splits.npz", "feature-engineered train/val/test arrays"),
+            ("feature_importance.csv", "full feature importance table"),
+            ("tables/selected_features.csv", "selected top feature list"),
+            ("exploration_summary.md", "updated preparation summary with feature section"),
+        ),
+        next_command=f"uv run python -m emc_diag train --config {args.config} --device auto",
+    )
     return 0
 
 
@@ -2484,6 +2661,20 @@ def _handle_train(args: argparse.Namespace) -> int:
     )
     run_dir = _train_from_config(config, requested_device=args.device)
     print(f"[train] completed run_dir={run_dir}", flush=True)
+    metrics = load_json(run_dir / "metrics.json")
+    _print_completion_summary(
+        "train",
+        run_dir,
+        (
+            ("metrics.json", "model metrics and evaluation scores"),
+            ("predictions.csv", "per-sample predictions"),
+            ("run_config.yaml", "resolved run configuration"),
+            ("tables/per_class_metrics.csv", "per-class metrics table"),
+            ("tables/candidate_scores.csv", "candidate model comparison table"),
+        ),
+        metrics=metrics,
+        next_command=f"uv run python -m emc_diag evaluate --run-dir {run_dir}",
+    )
     return 0
 
 
@@ -2626,11 +2817,38 @@ def _handle_evaluate(args: argparse.Namespace) -> int:
             ),
         )
     _visualize_run(run_dir, theme_name=run_config.get("visualization", {}).get("theme", "paper-bar"))
+    _print_completion_summary(
+        "evaluate",
+        run_dir,
+        (
+            ("metrics.json", "refreshed metrics and evaluation scores"),
+            ("tables/per_class_metrics.csv", "per-class metrics table"),
+            ("figures/confusion_matrix.png", "confusion matrix figure"),
+            ("figures/per_class_metrics.png", "per-class metrics figure"),
+            ("summary.md", "updated human-readable run summary"),
+        ),
+        metrics=metrics,
+        next_command=f"uv run python -m emc_diag export-report --run-dir {run_dir} --format md",
+    )
     return 0
 
 
 def _handle_visualize(args: argparse.Namespace) -> int:
-    _visualize_run(Path(args.run_dir), theme_name=args.theme)
+    run_dir = Path(args.run_dir)
+    _visualize_run(run_dir, theme_name=args.theme)
+    metrics = load_json(run_dir / "metrics.json")
+    _print_completion_summary(
+        "visualize",
+        run_dir,
+        (
+            ("figures/confusion_matrix.png", "confusion matrix figure"),
+            ("figures/metrics_overview.png", "overall metrics figure"),
+            ("figures/per_class_metrics.png", "per-class metrics figure"),
+            ("summary.md", "human-readable run summary"),
+        ),
+        metrics=metrics,
+        next_command=f"uv run python -m emc_diag export-report --run-dir {run_dir} --format md",
+    )
     return 0
 
 
@@ -2696,6 +2914,58 @@ def _handle_export_report(args: argparse.Namespace) -> int:
     )
     if args.format == "csv":
         save_dataframe(run_dir / "tables" / "metrics_summary.csv", pd.DataFrame([metrics]))
+    _print_completion_summary(
+        "export-report",
+        run_dir,
+        (
+            ("summary.md", "human-readable run summary"),
+            ("tables/metrics_summary.csv", "flat metrics table"),
+        ),
+        metrics=metrics,
+        next_command="Open summary.md and figures/ for the main outputs.",
+    )
+    return 0
+
+
+def _handle_quickstart(args: argparse.Namespace) -> int:
+    output_root = Path(args.output_root).resolve()
+    ensure_dir(output_root)
+    config = load_config(args.config)
+    quickstart_config = _prepare_quickstart_config(config, output_root)
+
+    run_dir = _run_pipeline_config(
+        quickstart_config,
+        requested_device=args.device,
+        theme_name=quickstart_config.get("visualization", {}).get("theme", "paper-bar"),
+    )
+    prepared_work_dir = Path(quickstart_config["runtime"]["prepared_dir"])
+    latest_prepared_dir = _curate_output_dir(
+        prepared_work_dir,
+        output_root / "latest_prepared",
+        QUICKSTART_CORE_PREPARED_FILES,
+    )
+    latest_run_dir = _curate_output_dir(
+        run_dir,
+        output_root / "latest_run",
+        QUICKSTART_CORE_RUN_FILES,
+    )
+
+    metrics = load_json(run_dir / "metrics.json")
+    print(f"[quickstart] latest_prepared={latest_prepared_dir.resolve()}", flush=True)
+    print(f"[quickstart] latest_run={latest_run_dir.resolve()}", flush=True)
+    _print_completion_summary(
+        "quickstart-prepared",
+        latest_prepared_dir,
+        QUICKSTART_CORE_PREPARED_FILES,
+        next_command="Open latest_prepared/exploration_summary.md for dataset and feature prep outputs.",
+    )
+    _print_completion_summary(
+        "quickstart",
+        latest_run_dir,
+        QUICKSTART_CORE_RUN_FILES,
+        metrics=metrics,
+        next_command="Open latest_run/summary.md first, then check latest_run/figures/.",
+    )
     return 0
 
 
@@ -2945,6 +3215,7 @@ COMMAND_HANDLERS = {
     "evaluate": _handle_evaluate,
     "visualize": _handle_visualize,
     "export-report": _handle_export_report,
+    "quickstart": _handle_quickstart,
     "benchmark": _handle_benchmark,
     "thesis-assets": _handle_thesis_assets,
 }
