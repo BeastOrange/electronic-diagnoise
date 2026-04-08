@@ -451,6 +451,12 @@ def train_baseline_model(
     }
 
 
+def train_qwen_qlora_classifier(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    from emc_diag.llm_modeling import train_qwen_qlora_classifier as _train_qwen_qlora_classifier
+
+    return _train_qwen_qlora_classifier(*args, **kwargs)
+
+
 @dataclass
 class _TrainConfig:
     epochs: int

@@ -1,0 +1,95 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: presence_qwen_vs_cnn
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_Signal_Strength
+    - PU_bandwidth
+    - PU_burst_duration
+    - Frequency_Band
+tasks:
+  - name: presence
+    task_name: presence
+    target_column: PU_Presence
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_Signal_Strength
+      - PU_bandwidth
+      - PU_burst_duration
+      - Frequency_Band
+features:
+  method: hybrid
+  top_k: 20
+model:
+  name: qwen_qlora_classifier
+  mode: single_task
+  epochs: 2
+  batch_size: 2
+  learning_rate: 0.0002
+  dropout: 0.2
+  weight_decay: 0.0001
+  patience: 3
+  scheduler: plateau
+  sequence_layout: temporal_cov_only
+  llm:
+    model_id: Qwen/Qwen2.5-3B-Instruct
+    max_length: 1024
+    lora_r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    load_in_4bit: true
+    bnb_4bit_quant_type: nf4
+    gradient_accumulation_steps: 4
+    warmup_ratio: 0.03
+    save_adapter_only: true
+benchmark:
+  matrix:
+    tasks:
+      - presence
+    models:
+      - qwen_qlora_classifier
+      - cnn_1d
+    seeds:
+      - 42
+    modes:
+      - single_task
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+  cross_validation:
+    enabled: false
+  learning_curve:
+    enabled: false
+  ablation:
+    enabled: false
+  risk_checks:
+    enabled: true
+    warning_threshold: 0.05
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_presence_qwen_vs_cnn
+  artifacts_dir: ../artifacts/runs

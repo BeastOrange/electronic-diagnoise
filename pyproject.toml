@@ -20,6 +20,12 @@ dependencies = [
 dev = [
   "pytest>=8.3,<9.0",
 ]
+llm = [
+  "accelerate>=1.4,<2.0",
+  "bitsandbytes>=0.45,<1.0",
+  "peft>=0.14,<1.0",
+  "transformers>=4.49,<5.0",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]

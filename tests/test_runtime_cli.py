@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from emc_diag.cli import _call_with_batch_backoff, _expand_benchmark_variants, main
+from emc_diag.cli import _call_with_batch_backoff, _expand_benchmark_variants, _model_family_for_name, main
 from emc_diag.config import load_config
 from emc_diag.runtime import resolve_device
 
@@ -609,6 +609,59 @@ def _write_pretrain_benchmark_matrix_config(config_path: Path, raw_data_path: Pa
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
+def _write_qwen_benchmark_matrix_config(config_path: Path, raw_data_path: Path, prepared_dir: Path) -> None:
+    config = {
+        "dataset": {
+            "name": "cognitive_radio_spectrum",
+            "schema": "tabular",
+            "input_path": str(raw_data_path),
+            "label_column": "PU_Presence",
+        },
+        "task": {
+            "type": "classification",
+            "task_name": "presence",
+            "target_column": "PU_Presence",
+            "metric_primary": "accuracy",
+            "metric_secondary": "f1",
+            "drop_leakage_columns": ["time_index", "PU_Signal_Strength", "PU_bandwidth", "PU_drift_type"],
+        },
+        "tasks": [
+            {
+                "name": "presence",
+                "target_column": "PU_Presence",
+                "metric_primary": "accuracy",
+                "metric_secondary": "f1",
+                "drop_leakage_columns": ["time_index", "PU_Signal_Strength", "PU_bandwidth", "PU_drift_type"],
+            }
+        ],
+        "features": {"method": "hybrid", "top_k": 8},
+        "model": {
+            "name": "qwen_qlora_classifier",
+            "mode": "single_task",
+            "epochs": 1,
+            "batch_size": 2,
+            "learning_rate": 0.0002,
+        },
+        "benchmark": {
+            "matrix": {
+                "tasks": ["presence"],
+                "models": ["qwen_qlora_classifier", "cnn_1d"],
+                "seeds": [42],
+                "modes": ["single_task"],
+            }
+        },
+        "trainer": {"train_ratio": 0.7, "val_ratio": 0.15, "random_state": 42},
+        "metrics": {"primary": "accuracy"},
+        "visualization": {"theme": "paper-bar"},
+        "evaluation": {"threshold_tuning": {"enabled": False}},
+        "runtime": {
+            "prepared_dir": str(prepared_dir),
+            "artifacts_dir": str(prepared_dir / "artifacts"),
+        },
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
 def test_resolve_device_prefers_cpu_when_requested() -> None:
     assert resolve_device("cpu") == "cpu"
 
@@ -685,6 +738,40 @@ def test_load_config_preserves_imbalance_training_fields(tmp_path: Path) -> None
     assert loaded["trainer"]["sampler"] == "balanced"
 
 
+def test_load_config_exposes_llm_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "qwen_defaults.yaml"
+    config = {
+        "dataset": {
+            "name": "synthetic_emi",
+            "schema": "tabular",
+            "input_path": "synthetic.csv",
+            "label_column": "label",
+        },
+        "task": {
+            "task_name": "qwen_defaults",
+            "target_column": "label",
+        },
+        "model": {
+            "name": "qwen_qlora_classifier",
+        },
+        "runtime": {
+            "prepared_dir": "prepared",
+            "artifacts_dir": "artifacts",
+        },
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    loaded = load_config(config_path)
+
+    assert loaded["model"]["name"] == "qwen_qlora_classifier"
+    assert loaded["model"]["llm"]["model_id"].startswith("Qwen/")
+    assert loaded["model"]["llm"]["load_in_4bit"] is True
+
+
+def test_model_family_marks_qwen_as_llm() -> None:
+    assert _model_family_for_name("qwen_qlora_classifier") == "llm"
+
+
 def test_expand_benchmark_variants_supports_seed_mode_and_transfer_strategy(tmp_path: Path) -> None:
     raw_data_path = tmp_path / "cognitive_like.csv"
     prepared_dir = tmp_path / "prepared_matrix"
@@ -707,6 +794,23 @@ def test_expand_benchmark_variants_supports_seed_mode_and_transfer_strategy(tmp_
     assert len(prepared_dirs) == 4
     assert any(path.endswith("presence-seed-7") for path in prepared_dirs)
     assert any(path.endswith("band-seed-11") for path in prepared_dirs)
+
+
+def test_expand_benchmark_variants_supports_qwen_matrix(tmp_path: Path) -> None:
+    raw_data_path = tmp_path / "cognitive_like.csv"
+    prepared_dir = tmp_path / "prepared_qwen_matrix"
+    config_path = tmp_path / "qwen_benchmark_matrix.yaml"
+    _write_mixed_cognitive_like_dataset(raw_data_path)
+    _write_qwen_benchmark_matrix_config(config_path, raw_data_path, prepared_dir)
+
+    variants = _expand_benchmark_variants(config_path)
+    labels = [label for label, _ in variants]
+    assert any(":presence:qwen_qlora_classifier:seed=42:mode=single_task:transfer=scratch" in label for label in labels)
+
+    qwen_variant = next(config for label, config in variants if ":qwen_qlora_classifier:" in label)
+    assert qwen_variant["model"]["name"] == "qwen_qlora_classifier"
+    assert qwen_variant["model"]["mode"] == "single_task"
+    assert qwen_variant["model"]["candidates"] == []
 
 
 def test_call_with_batch_backoff_retries_on_cuda_oom() -> None:

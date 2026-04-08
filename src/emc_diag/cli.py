@@ -39,6 +39,7 @@ from emc_diag.feature_engineering import (
 from emc_diag.runtime import ensure_dir, resolve_device, timestamp_tag
 
 DEEP_MODEL_NAMES = {"cnn_1d", "cnn_1d_residual", "cnn_lstm", "transformer_1d", "cognitive_radio_hybrid", "cognitive_radio_scalar_hybrid"}
+LLM_MODEL_NAMES = {"qwen_qlora_classifier"}
 QUICKSTART_DEFAULT_CONFIG = "configs/cognitive_radio_spectrum.yaml"
 QUICKSTART_CORE_RUN_FILES: tuple[tuple[str, str], ...] = (
     ("metrics.json", "model metrics and key scores"),
@@ -399,6 +400,7 @@ def _expand_benchmark_variants(config_path: Path) -> list[tuple[str, dict[str, A
         task_entry = _task_entry_by_name(config, task_name)
         for model_name in model_names:
             is_deep = _is_deep_model_name(model_name)
+            is_llm = _is_llm_model_name(model_name)
             valid_modes = [
                 mode
                 for mode in modes
@@ -431,7 +433,7 @@ def _expand_benchmark_variants(config_path: Path) -> list[tuple[str, dict[str, A
                             variant["model"].setdefault("pretrain", {})["enabled"] = True
                         else:
                             variant["model"].setdefault("pretrain", {})["enabled"] = False
-                        if not is_deep:
+                        if not is_deep and not is_llm:
                             variant["model"]["candidates"] = [model_name]
                         transfer_config = dict(variant["model"].get("transfer") or {})
                         transfer_enabled = (
@@ -817,7 +819,13 @@ def _is_deep_model_name(model_name: str) -> bool:
     return str(model_name) in DEEP_MODEL_NAMES
 
 
+def _is_llm_model_name(model_name: str) -> bool:
+    return str(model_name) in LLM_MODEL_NAMES
+
+
 def _model_family_for_name(model_name: str) -> str:
+    if _is_llm_model_name(model_name):
+        return "llm"
     return "dl" if _is_deep_model_name(model_name) else "ml"
 
 
@@ -1756,6 +1764,27 @@ def _execute_training(
             progress=progress,
         )
         resolved_device = result["resolved_device"]
+    elif _is_llm_model_name(config["model"]["name"]):
+        llm_config = dict(config["model"].get("llm", {}))
+        result = _call_with_batch_backoff(
+            modeling.train_qwen_qlora_classifier,
+            config,
+            x_train=training_splits["train"]["X"],
+            y_train=training_splits["train"]["y"],
+            x_val=training_splits["val"]["X"],
+            y_val=training_splits["val"]["y"],
+            requested_device=device,
+            epochs=config["model"]["epochs"],
+            batch_size=config["model"]["batch_size"],
+            learning_rate=config["model"]["learning_rate"],
+            random_seed=config["trainer"]["random_state"],
+            weight_decay=config["model"].get("weight_decay", 0.0),
+            patience=config["model"].get("patience"),
+            feature_names=list(feature_bundle.get("selected_feature_names", [])),
+            progress=progress,
+            **llm_config,
+        )
+        resolved_device = result["resolved_device"]
     elif _is_deep_model_name(config["model"]["name"]):
         deep_trainers: dict[str, Callable[..., Any]] = {
             "cnn_1d": modeling.train_cnn_model,
@@ -1886,6 +1915,15 @@ def _execute_training(
         metrics["best_checkpoint"] = result["best_checkpoint"]
     if "encoder_metadata" in result:
         metrics["encoder_metadata"] = result["encoder_metadata"]
+    if "llm_info" in result:
+        llm_info = dict(result["llm_info"])
+        metrics["llm_info"] = llm_info
+        if "foundation_model_id" in llm_info:
+            metrics["foundation_model_id"] = str(llm_info["foundation_model_id"])
+        if "lora_config" in llm_info:
+            metrics["lora_config"] = llm_info["lora_config"]
+        if "quantization_config" in llm_info:
+            metrics["quantization_config"] = llm_info["quantization_config"]
     if threshold is not None:
         metrics["threshold"] = float(threshold)
     if transfer_payload.get("transfer_from_run_dir"):
@@ -2021,6 +2059,12 @@ def _persist_training_result(run_dir: Path, execution: dict[str, Any]) -> None:
             torch.save(result["encoder_state_dict"], run_dir / checkpoint_name)
         except Exception:
             pass
+    adapter_dir = result.get("adapter_artifact_dir")
+    if adapter_dir:
+        source = Path(str(adapter_dir))
+        target = run_dir / "llm_adapter"
+        if source.exists() and source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
 
 
 def _ephemeral_run(
@@ -2788,6 +2832,10 @@ def _handle_evaluate(args: argparse.Namespace) -> int:
         "val_f1_score",
         "overfit_gap",
         "encoder_metadata",
+        "llm_info",
+        "foundation_model_id",
+        "lora_config",
+        "quantization_config",
         "transfer_from_run_dir",
         "transfer_strategy",
         "pretrain_history",

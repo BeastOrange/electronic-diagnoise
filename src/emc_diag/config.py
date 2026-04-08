@@ -66,6 +66,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "source_task": None,
             "strict": True,
         },
+        "llm": {
+            "model_id": "Qwen/Qwen2.5-3B-Instruct",
+            "max_length": 1024,
+            "lora_r": 16,
+            "lora_alpha": 32,
+            "lora_dropout": 0.05,
+            "load_in_4bit": True,
+            "bnb_4bit_quant_type": "nf4",
+            "gradient_accumulation_steps": 4,
+            "warmup_ratio": 0.03,
+            "save_adapter_only": True,
+        },
         "pretrain": {
             "enabled": False,
             "objective": "masked_reconstruction",
