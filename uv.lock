@@ -187,6 +187,7 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "torch" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -211,6 +212,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15,<2.0" },
     { name = "seaborn", specifier = ">=0.13,<0.14" },
     { name = "torch", specifier = ">=2.8,<3.0" },
+    { name = "tqdm", specifier = ">=4.67,<5.0" },
 ]
 
 [package.metadata.requires-dev]

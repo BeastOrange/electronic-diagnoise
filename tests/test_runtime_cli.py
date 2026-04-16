@@ -18,6 +18,7 @@ from emc_diag.cli import (
     main,
 )
 from emc_diag.config import load_config
+from emc_diag.evaluation import evaluate_predictions
 from emc_diag.runtime import resolve_device
 
 
@@ -1012,6 +1013,101 @@ def test_execute_training_forwards_class_weighting_to_llm_trainer(tmp_path: Path
     _execute_training(config, prepared, requested_device="cpu")
 
     assert captured["class_weighting"] == "balanced"
+
+
+def test_execute_training_keeps_baseline_dtype_consistent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = tmp_path
+    config = {
+        "task": {
+            "task_name": "dtype_consistency",
+            "target_column": "label",
+            "metric_primary": "accuracy",
+            "metric_secondary": "f1",
+        },
+        "model": {
+            "name": "bagged_logistic_regression",
+            "candidates": ["bagged_logistic_regression"],
+            "params": {},
+        },
+        "trainer": {"random_state": 7},
+        "evaluation": {"threshold_tuning": {"enabled": False}},
+    }
+    prepared = {
+        "metadata": {"labels": ["neg", "pos"], "leakage_columns_removed": []},
+    }
+    training_splits = {
+        "train": {
+            "X": np.asarray([[0.1], [0.2], [1.1], [1.2]], dtype=np.float64),
+            "y": np.asarray([0, 0, 1, 1], dtype=np.int64),
+        },
+        "val": {
+            "X": np.asarray([[0.15], [1.15]], dtype=np.float64),
+            "y": np.asarray([0, 1], dtype=np.int64),
+        },
+        "test": {
+            "X": np.asarray([[0.18], [1.18]], dtype=np.float64),
+            "y": np.asarray([0, 1], dtype=np.int64),
+        },
+    }
+
+    class _DtypeSensitiveBinaryPredictor:
+        def predict(self, x: np.ndarray) -> np.ndarray:
+            x_array = np.asarray(x)
+            positive = (x_array[:, 0] > 0.8).astype(np.int64)
+            if x_array.dtype == np.float32:
+                return positive
+            return 1 - positive
+
+    def _fake_train_baseline_model(**kwargs: object) -> dict[str, object]:
+        x_val = np.asarray(kwargs["x_val"], dtype=np.float32)
+        y_val = np.asarray(kwargs["y_val"], dtype=np.int64)
+        model = _DtypeSensitiveBinaryPredictor()
+        val_pred = model.predict(x_val)
+        val_metrics = evaluate_predictions(y_val, val_pred)
+        return {
+            "model": model,
+            "model_name": "bagged_logistic_regression",
+            "selected_baseline": "bagged_logistic_regression",
+            "candidate_scores": {
+                "bagged_logistic_regression": {
+                    "accuracy": val_metrics["accuracy"],
+                    "f1": val_metrics["f1"],
+                    "macro_f1": val_metrics["macro_f1"],
+                    "precision": val_metrics["precision"],
+                    "recall": val_metrics["recall"],
+                    "threshold": None,
+                }
+            },
+            "val_predictions": val_pred,
+            "val_accuracy": val_metrics["accuracy"],
+            "val_metrics": val_metrics,
+            "threshold": None,
+        }
+
+    monkeypatch.setattr(
+        "emc_diag.cli._build_training_inputs",
+        lambda *_args, **_kwargs: {
+            "feature_bundle": {"selected_feature_names": ["sensor_a"], "summary": {}, "splits": training_splits},
+            "training_splits": training_splits,
+            "training_metadata": {"sequence_layout": None, "summary": {}},
+        },
+    )
+    monkeypatch.setattr(
+        "emc_diag.cli._load_modeling_module",
+        lambda: type(
+            "FakeModelingModule",
+            (),
+            {"train_baseline_model": staticmethod(_fake_train_baseline_model)},
+        )(),
+    )
+
+    execution = _execute_training(config, prepared, requested_device="cpu")
+    metrics = execution["metrics"]
+    candidate = metrics["candidate_scores"]["bagged_logistic_regression"]
+
+    assert "threshold" not in metrics
+    assert candidate["accuracy"] == pytest.approx(metrics["val_accuracy_score"])
+    assert candidate["f1"] == pytest.approx(metrics["val_f1_score"])
 
 
 def test_cli_smoke_pipeline_generates_artifacts(tmp_path: Path) -> None:

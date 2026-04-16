@@ -710,9 +710,13 @@ def _decode_labels(values: np.ndarray, label_names: list[str]) -> list[str]:
     return decoded
 
 
+def _baseline_input_array(x: np.ndarray) -> np.ndarray:
+    return np.asarray(x, dtype=np.float32)
+
+
 def _predict_with_model(model: Any, x: np.ndarray, device: str) -> np.ndarray:
     if hasattr(model, "predict"):
-        return np.asarray(model.predict(x), dtype=np.int64)
+        return np.asarray(model.predict(_baseline_input_array(x)), dtype=np.int64)
 
     try:
         import torch
@@ -731,7 +735,7 @@ def _predict_with_model(model: Any, x: np.ndarray, device: str) -> np.ndarray:
 
 def _predict_scores_with_model(model: Any, x: np.ndarray, device: str) -> np.ndarray | None:
     if hasattr(model, "predict_proba"):
-        probabilities = np.asarray(model.predict_proba(x), dtype=float)
+        probabilities = np.asarray(model.predict_proba(_baseline_input_array(x)), dtype=float)
         if probabilities.ndim == 2 and probabilities.shape[1] >= 2:
             return probabilities[:, 1]
         if probabilities.ndim == 1:
@@ -739,7 +743,7 @@ def _predict_scores_with_model(model: Any, x: np.ndarray, device: str) -> np.nda
         return None
 
     if hasattr(model, "decision_function"):
-        decision = np.asarray(model.decision_function(x), dtype=float)
+        decision = np.asarray(model.decision_function(_baseline_input_array(x)), dtype=float)
         if decision.ndim == 2 and decision.shape[1] >= 2:
             return decision[:, 1]
         if decision.ndim == 1:
