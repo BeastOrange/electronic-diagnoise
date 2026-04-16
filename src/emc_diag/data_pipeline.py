@@ -565,17 +565,19 @@ def _split_indices(
     train_ratio: float,
     val_ratio: float,
     random_state: int,
+    y: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
+    """Split sample indices into train / val / test.
+
+    When labels are provided, preserve class proportions when possible.
+    """
+
     if not (0 < train_ratio < 1) or not (0 <= val_ratio < 1):
         raise ValueError("train_ratio must be in (0, 1) and val_ratio in [0, 1).")
     if train_ratio + val_ratio >= 1:
         raise ValueError("train_ratio + val_ratio must be < 1.")
 
-    rng = np.random.default_rng(random_state)
-    indices = np.arange(n_samples)
-    rng.shuffle(indices)
-
-    n_total = len(indices)
+    n_total = n_samples
     n_train = int(round(n_total * train_ratio))
     n_val = int(round(n_total * val_ratio))
     n_train = max(1, min(n_train, n_total - 2))
@@ -584,10 +586,62 @@ def _split_indices(
     if n_test <= 0:
         raise ValueError("Computed test split has zero size. Increase dataset size or change ratios.")
 
+    if y is not None:
+        labels = np.asarray(y)
+        classes, counts = np.unique(labels, return_counts=True)
+        if len(classes) >= 2 and counts.min() >= 3:
+            return _stratified_split_indices(labels, classes, n_train, n_val, random_state)
+
+    rng = np.random.default_rng(random_state)
+    indices = np.arange(n_samples)
+    rng.shuffle(indices)
+
     return {
         "train": indices[:n_train],
         "val": indices[n_train : n_train + n_val],
         "test": indices[n_train + n_val :],
+    }
+
+
+def _stratified_split_indices(
+    labels: np.ndarray,
+    classes: np.ndarray,
+    n_train: int,
+    n_val: int,
+    random_state: int,
+) -> dict[str, np.ndarray]:
+    """Stratified train/val/test split preserving class proportions."""
+
+    rng = np.random.default_rng(random_state)
+    n_total = len(labels)
+
+    train_indices: list[int] = []
+    val_indices: list[int] = []
+    test_indices: list[int] = []
+
+    for cls in classes:
+        cls_idx = np.flatnonzero(labels == cls)
+        rng.shuffle(cls_idx)
+        cls_n = len(cls_idx)
+        cls_train = max(1, int(round(cls_n * n_train / n_total)))
+        cls_val = max(1, int(round(cls_n * n_val / n_total)))
+        cls_test = cls_n - cls_train - cls_val
+        if cls_test <= 0:
+            cls_test = 1
+            cls_train = cls_n - cls_val - cls_test
+
+        train_indices.extend(cls_idx[:cls_train])
+        val_indices.extend(cls_idx[cls_train : cls_train + cls_val])
+        test_indices.extend(cls_idx[cls_train + cls_val :])
+
+    rng.shuffle(train_indices)
+    rng.shuffle(val_indices)
+    rng.shuffle(test_indices)
+
+    return {
+        "train": np.asarray(train_indices, dtype=np.int64),
+        "val": np.asarray(val_indices, dtype=np.int64),
+        "test": np.asarray(test_indices, dtype=np.int64),
     }
 
 
@@ -600,7 +654,7 @@ def _build_splits(
     y_tasks: dict[str, np.ndarray] | None = None,
     task_masks: dict[str, np.ndarray] | None = None,
 ) -> dict[str, dict[str, np.ndarray]]:
-    index_splits = _split_indices(x.shape[0], train_ratio, val_ratio, random_state)
+    index_splits = _split_indices(x.shape[0], train_ratio, val_ratio, random_state, y=y)
     if task_masks:
         missing_any = np.zeros(x.shape[0], dtype=bool)
         for mask in task_masks.values():

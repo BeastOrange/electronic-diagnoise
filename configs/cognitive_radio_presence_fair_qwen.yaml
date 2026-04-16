@@ -1,0 +1,95 @@
+dataset:
+  name: cognitive_radio_spectrum
+  schema: tabular
+  input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
+  label_column: PU_Presence
+task:
+  type: classification
+  task_name: pu_presence_fair_qwen
+  target_column: PU_Presence
+  metric_primary: accuracy
+  metric_secondary: f1
+  drop_leakage_columns:
+    - time_index
+    - PU_bandwidth
+    - PU_burst_duration
+    - PU_drift_type
+tasks:
+  - name: pu_presence_fair_qwen
+    task_name: pu_presence_fair_qwen
+    target_column: PU_Presence
+    metric_primary: accuracy
+    metric_secondary: f1
+    drop_leakage_columns:
+      - time_index
+      - PU_bandwidth
+      - PU_burst_duration
+      - PU_drift_type
+features:
+  method: hybrid
+  top_k: full
+model:
+  name: qwen_qlora_classifier
+  mode: single_task
+  epochs: 4
+  batch_size: 1
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  patience: 3
+  class_weighting: balanced
+  llm:
+    model_id: /root/autodl-tmp/models/Qwen2.5-7B-Instruct
+    max_length: 512
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    load_in_4bit: true
+    bnb_4bit_quant_type: nf4
+    gradient_accumulation_steps: 16
+    warmup_ratio: 0.03
+    save_adapter_only: true
+    gradient_checkpointing: true
+    torch_dtype: float16
+    task_instruction: Determine whether the primary user is present in this EMC and cognitive radio sensing sample.
+    label_descriptions:
+      "0": absent
+      "1": present
+    feature_limit: null
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+  cross_validation:
+    enabled: false
+  learning_curve:
+    enabled: false
+  ablation:
+    enabled: false
+  risk_checks:
+    enabled: true
+    warning_threshold: 0.05
+runtime:
+  prepared_dir: ../artifacts/prepared_cognitive_presence_fair_qwen
+  artifacts_dir: ../artifacts/runs
