@@ -12,7 +12,6 @@ task:
   drop_leakage_columns:
     - time_index
     - PU_burst_duration
-    - Frequency_Band
     - PU_drift_type
 tasks:
   - name: presence
@@ -23,7 +22,6 @@ tasks:
     drop_leakage_columns:
       - time_index
       - PU_burst_duration
-      - Frequency_Band
       - PU_drift_type
 features:
   method: basic

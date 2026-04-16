@@ -5,7 +5,7 @@ dataset:
   label_column: PU_Presence
 task:
   type: classification
-  task_name: pu_presence_qwen_qlora
+  task_name: pu_presence_qwen_local
   target_column: PU_Presence
   metric_primary: accuracy
   metric_secondary: f1
@@ -21,13 +21,14 @@ features:
 model:
   name: llm_qlora_classifier
   mode: single_task
-  epochs: 2
+  epochs: 4
   batch_size: 1
   learning_rate: 0.0001
   weight_decay: 0.01
-  patience: 2
+  patience: 3
+  class_weighting: balanced
   llm:
-    model_id: Qwen/Qwen2.5-7B-Instruct
+    model_id: /root/autodl-tmp/models/Qwen2.5-7B-Instruct
     max_length: 512
     lora_r: 8
     lora_alpha: 16
@@ -47,7 +48,7 @@ model:
     save_adapter_only: true
     gradient_checkpointing: true
     torch_dtype: float16
-    feature_limit: 16
+    feature_limit: 20
     task_instruction: Determine whether the primary user is present in this EMC and cognitive radio sensing sample.
     label_descriptions:
       "0": absent
@@ -80,5 +81,5 @@ evaluation:
     enabled: true
     warning_threshold: 0.05
 runtime:
-  prepared_dir: ../artifacts/prepared_cognitive_presence_qwen_qlora
+  prepared_dir: ../artifacts/prepared_cognitive_presence_qwen_local
   artifacts_dir: ../artifacts/runs

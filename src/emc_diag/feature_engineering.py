@@ -190,8 +190,17 @@ def _augment_tabular_with_prefix_aggregates(
 
 
 def _reconstruct_hermitian_2x2(block: np.ndarray) -> np.ndarray:
-    """Reconstruct a 2x2 complex Hermitian matrix from an 8-element flat vector."""
+    """Reconstruct a 2x2 complex Hermitian matrix from an 8-element flat vector.
 
+    Layout assumed: [Re(C00), Re(C01), Re(C10), Re(C11),
+                     Im(C00), Im(C01), Im(C10), Im(C11)]
+    For Hermitian matrices Im(C00)=Im(C11)≈0.
+
+    Args:
+        block: shape (n_samples, 8)
+    Returns:
+        shape (n_samples, 2, 2) complex Hermitian matrices
+    """
     n = block.shape[0]
     real_part = block[:, :4].reshape(n, 2, 2)
     imag_part = block[:, 4:8].reshape(n, 2, 2)
@@ -199,9 +208,25 @@ def _reconstruct_hermitian_2x2(block: np.ndarray) -> np.ndarray:
 
 
 def _hermitian_2x2_features(matrices: np.ndarray, prefix: str) -> tuple[np.ndarray, list[str]]:
-    """Extract classical cognitive radio detection statistics from 2x2 Hermitian matrices."""
+    """Extract detection statistics from batched 2x2 complex Hermitian matrices.
 
+    Implements classical cognitive radio spectrum sensing detectors:
+    - ED  (Energy Detection):     trace of the covariance matrix
+    - MME (Max-Min Eigenvalue):   lambda_max / lambda_min
+    - RLE (Roy Largest Eigenvalue): lambda_max / trace
+    - CAV (Covariance Absolute Value): diagonal_sum / total_abs_sum
+    - Coherence magnitude:        |C01| / sqrt(C00 * C11)
+
+    Args:
+        matrices: shape (n, 2, 2) complex
+        prefix: name prefix for generated features
+    Returns:
+        (feature_matrix, feature_names)
+    """
+    n = matrices.shape[0]
+    # Force Hermitian for numerical stability: H = (M + M^H) / 2
     herm = (matrices + matrices.conj().transpose(0, 2, 1)) / 2.0
+    # Eigenvalues of 2x2 Hermitian: always real, sorted ascending
     eigvals = np.linalg.eigvalsh(herm.real if np.isrealobj(herm) else herm)
     lmin = eigvals[:, 0]
     lmax = eigvals[:, 1]
@@ -217,20 +242,19 @@ def _hermitian_2x2_features(matrices: np.ndarray, prefix: str) -> tuple[np.ndarr
     safe_lmin = np.where(np.abs(lmin) < 1e-15, 1e-15, lmin)
     safe_tr = np.where(np.abs(tr) < 1e-15, 1e-15, tr)
 
-    features = np.column_stack(
-        [
-            lmax,
-            lmin,
-            lmax - lmin,
-            tr,
-            lmax / np.abs(safe_lmin),
-            lmax / np.abs(safe_tr),
-            diag_abs / np.maximum(total_abs, 1e-15),
-            coherence,
-            det,
-            np.log(np.maximum(np.abs(det), 1e-30)),
-        ]
-    )
+    features = np.column_stack([
+        lmax,
+        lmin,
+        lmax - lmin,
+        tr,
+        lmax / np.abs(safe_lmin),          # MME
+        lmax / np.abs(safe_tr),            # RLE
+        diag_abs / np.maximum(total_abs, 1e-15),  # CAV
+        coherence,
+        det,
+        np.log(np.maximum(np.abs(det), 1e-30)),
+    ])
+
     names = [
         f"{prefix}_eig_max",
         f"{prefix}_eig_min",
@@ -250,21 +274,21 @@ def _collect_su_columns(
     feature_names: list[str],
     suffix: str,
 ) -> dict[str, list[int]]:
-    """Find columns matching SU<n>_<suffix>_<index> and group by SU prefix."""
+    """Find columns matching SU<n>_<suffix>_<index> and group by SU prefix.
 
+    Returns: {prefix -> [column_indices sorted by element index]}
+    """
     pattern = re.compile(rf"^(SU\d+_{re.escape(suffix)})_(\d+)$")
     groups: dict[str, list[tuple[int, int]]] = {}
     for col_idx, name in enumerate(feature_names):
-        match = pattern.match(name)
-        if not match:
-            continue
-        prefix = match.group(1)
-        elem_idx = int(match.group(2))
-        groups.setdefault(prefix, []).append((elem_idx, col_idx))
-
+        m = pattern.match(name)
+        if m:
+            prefix = m.group(1)
+            elem_idx = int(m.group(2))
+            groups.setdefault(prefix, []).append((elem_idx, col_idx))
     result: dict[str, list[int]] = {}
     for prefix, entries in groups.items():
-        entries.sort(key=lambda item: item[0])
+        entries.sort(key=lambda t: t[0])
         result[prefix] = [col_idx for _, col_idx in entries]
     return result
 
@@ -273,12 +297,20 @@ def _extract_cognitive_radio_physics_features(
     matrix: np.ndarray,
     feature_names: list[str],
 ) -> tuple[np.ndarray, list[str]]:
-    """Extract physics-informed features from cognitive radio covariance data."""
+    """Extract physics-informed features from cognitive radio covariance data.
 
+    Reconstructs 2x2 complex Hermitian matrices from SU cov_flat columns and
+    temporal_cov columns, then computes detection statistics used in spectrum
+    sensing theory (ED, MME, RLE, CAV, coherence).
+
+    Also creates cross-SU features (inter-sensor agreement) and scalar
+    interaction features.
+    """
     n_samples = matrix.shape[0]
     all_features: list[np.ndarray] = []
     all_names: list[str] = []
 
+    # --- Per-SU cov_flat: 8 elements -> 2x2 Hermitian -> detection stats ---
     cov_groups = _collect_su_columns(feature_names, "cov_flat")
     su_cov_stats: dict[str, np.ndarray] = {}
 
@@ -288,113 +320,103 @@ def _extract_cognitive_radio_physics_features(
             cov_mat = _reconstruct_hermitian_2x2(block)
             feats, names = _hermitian_2x2_features(cov_mat, prefix + "_phys")
         else:
-            feats = np.column_stack(
-                [
-                    np.linalg.norm(block, axis=1),
-                    block.mean(axis=1),
-                    block.std(axis=1),
-                ]
-            )
+            # Fallback: basic statistics if not exactly 8 elements
+            feats = np.column_stack([
+                np.linalg.norm(block, axis=1),
+                block.mean(axis=1),
+                block.std(axis=1),
+            ])
             names = [f"{prefix}_phys_norm", f"{prefix}_phys_mean", f"{prefix}_phys_std"]
         all_features.append(feats)
         all_names.extend(names)
         su_cov_stats[prefix] = feats
 
+    # --- Per-SU temporal_cov: 32 elements -> 4 sub-blocks of 8 -> stats ---
     temp_groups = _collect_su_columns(feature_names, "temporal_cov")
+    su_temp_stats: dict[str, np.ndarray] = {}
+
     for prefix, col_indices in temp_groups.items():
         block = matrix[:, col_indices]
         n_blocks = block.shape[1] // _COV_BLOCK_SIZE
         if n_blocks >= 1 and block.shape[1] == n_blocks * _COV_BLOCK_SIZE:
+            # Process each time-window sub-block
             sub_features_list = []
-            for block_index in range(n_blocks):
-                start = block_index * _COV_BLOCK_SIZE
-                sub_block = block[:, start : start + _COV_BLOCK_SIZE]
+            for bi in range(n_blocks):
+                start = bi * _COV_BLOCK_SIZE
+                sub_block = block[:, start:start + _COV_BLOCK_SIZE]
                 cov_mat = _reconstruct_hermitian_2x2(sub_block)
                 sub_feats, _ = _hermitian_2x2_features(cov_mat, "")
                 sub_features_list.append(sub_feats)
 
-            sub_stack = np.stack(sub_features_list, axis=1)
+            sub_stack = np.stack(sub_features_list, axis=1)  # (n, n_blocks, n_stats)
+            # Aggregate across time windows
             time_mean = sub_stack.mean(axis=1)
             time_std = sub_stack.std(axis=1)
-            time_diff = (
-                np.abs(sub_stack[:, -1, :] - sub_stack[:, 0, :])
-                if n_blocks > 1
+            time_diff = np.abs(sub_stack[:, -1, :] - sub_stack[:, 0, :]) if n_blocks > 1 \
                 else np.zeros_like(time_mean)
-            )
 
-            stat_suffixes = [
-                "eig_max",
-                "eig_min",
-                "eig_spread",
-                "trace_ed",
-                "mme",
-                "rle",
-                "cav",
-                "coherence",
-                "det",
-                "log_det",
-            ]
-            for agg_name, agg_values in [("tmean", time_mean), ("tstd", time_std), ("tdelta", time_diff)]:
-                for stat_index, stat_suffix in enumerate(stat_suffixes):
-                    all_features.append(agg_values[:, stat_index : stat_index + 1])
-                    all_names.append(f"{prefix}_phys_{agg_name}_{stat_suffix}")
+            stat_suffixes = ["eig_max", "eig_min", "eig_spread", "trace_ed",
+                             "mme", "rle", "cav", "coherence", "det", "log_det"]
+            for agg_name, agg_vals in [("tmean", time_mean), ("tstd", time_std), ("tdelta", time_diff)]:
+                for si, stat_suf in enumerate(stat_suffixes):
+                    all_features.append(agg_vals[:, si:si+1])
+                    all_names.append(f"{prefix}_phys_{agg_name}_{stat_suf}")
+
+            su_temp_stats[prefix] = time_mean
         else:
-            feats = np.column_stack(
-                [
-                    np.linalg.norm(block, axis=1),
-                    block.mean(axis=1),
-                    block.std(axis=1),
-                ]
-            )
+            # Fallback: basic stats
+            feats = np.column_stack([
+                np.linalg.norm(block, axis=1),
+                block.mean(axis=1),
+                block.std(axis=1),
+            ])
             names = [f"{prefix}_phys_norm", f"{prefix}_phys_mean", f"{prefix}_phys_std"]
             all_features.append(feats)
             all_names.extend(names)
+            su_temp_stats[prefix] = feats
 
+    # --- Cross-SU features (inter-sensor agreement) ---
     cov_prefixes = sorted(cov_groups.keys())
     if len(cov_prefixes) >= 2:
-        for left_index in range(len(cov_prefixes)):
-            for right_index in range(left_index + 1, len(cov_prefixes)):
-                left = matrix[:, cov_groups[cov_prefixes[left_index]]]
-                right = matrix[:, cov_groups[cov_prefixes[right_index]]]
-                dot = (left * right).sum(axis=1)
-                left_norm = np.linalg.norm(left, axis=1)
-                right_norm = np.linalg.norm(right, axis=1)
-                cosine = dot / np.maximum(left_norm * right_norm, 1e-15)
-                l2_distance = np.linalg.norm(left - right, axis=1)
-                all_features.append(cosine.reshape(-1, 1))
-                all_features.append(l2_distance.reshape(-1, 1))
-                pair = f"{cov_prefixes[left_index]}_vs_{cov_prefixes[right_index]}"
+        # Pairwise cosine similarity of raw cov_flat vectors
+        for i in range(len(cov_prefixes)):
+            for j in range(i + 1, len(cov_prefixes)):
+                a = matrix[:, cov_groups[cov_prefixes[i]]]
+                b = matrix[:, cov_groups[cov_prefixes[j]]]
+                dot = (a * b).sum(axis=1)
+                na = np.linalg.norm(a, axis=1)
+                nb = np.linalg.norm(b, axis=1)
+                cos = dot / np.maximum(na * nb, 1e-15)
+                l2d = np.linalg.norm(a - b, axis=1)
+                all_features.append(cos.reshape(-1, 1))
+                all_features.append(l2d.reshape(-1, 1))
+                pair = f"{cov_prefixes[i]}_vs_{cov_prefixes[j]}"
                 all_names.extend([f"{pair}_cosine", f"{pair}_l2dist"])
 
+        # Cross-SU detection statistic agreement
         if len(su_cov_stats) >= 2:
-            stat_matrices = np.stack([su_cov_stats[prefix] for prefix in cov_prefixes], axis=1)
+            stat_matrices = np.stack([su_cov_stats[p] for p in cov_prefixes], axis=1)
             cross_mean = stat_matrices.mean(axis=1)
             cross_std = stat_matrices.std(axis=1)
-            stat_suffixes = [
-                "eig_max",
-                "eig_min",
-                "eig_spread",
-                "trace_ed",
-                "mme",
-                "rle",
-                "cav",
-                "coherence",
-                "det",
-                "log_det",
-            ]
-            for stat_index in range(min(cross_mean.shape[1], len(stat_suffixes))):
-                suffix = stat_suffixes[stat_index]
-                all_features.append(cross_mean[:, stat_index : stat_index + 1])
-                all_features.append(cross_std[:, stat_index : stat_index + 1])
-                all_names.extend([f"cross_su_cov_{suffix}_mean", f"cross_su_cov_{suffix}_std"])
+            n_actual_stats = cross_mean.shape[1]
+            stat_suffixes = ["eig_max", "eig_min", "eig_spread", "trace_ed",
+                             "mme", "rle", "cav", "coherence", "det", "log_det"]
+            for si in range(min(n_actual_stats, len(stat_suffixes))):
+                suf = stat_suffixes[si]
+                all_features.append(cross_mean[:, si:si+1])
+                all_features.append(cross_std[:, si:si+1])
+                all_names.extend([f"cross_su_cov_{suf}_mean", f"cross_su_cov_{suf}_std"])
 
+    # --- Scalar interaction features ---
     scalar_candidates = {"power_dB", "spectral_entropy", "freq_bin", "Frequency_Band"}
     scalar_map: dict[str, int] = {}
     for idx, name in enumerate(feature_names):
         if name in scalar_candidates:
             scalar_map[name] = idx
 
-    key_stat_indices = [3, 4, 7]
+    # Interaction: scalar * key detection stats (trace_ed, mme, coherence)
+    # Only use indices that exist in the stats matrix (fallback path has fewer columns)
+    key_stat_indices = [3, 4, 7]  # trace_ed, mme, coherence in _hermitian_2x2_features output
     key_stat_names = ["trace_ed", "mme", "coherence"]
     for scalar_name, scalar_idx in scalar_map.items():
         scalar_vals = matrix[:, scalar_idx]
@@ -402,12 +424,12 @@ def _extract_cognitive_radio_physics_features(
             if prefix not in su_cov_stats:
                 continue
             n_stats = su_cov_stats[prefix].shape[1]
-            for stat_idx, stat_name in zip(key_stat_indices, key_stat_names, strict=False):
-                if stat_idx >= n_stats:
+            for ki, kn in zip(key_stat_indices, key_stat_names):
+                if ki >= n_stats:
                     continue
-                interaction = scalar_vals * su_cov_stats[prefix][:, stat_idx]
+                interaction = scalar_vals * su_cov_stats[prefix][:, ki]
                 all_features.append(interaction.reshape(-1, 1))
-                all_names.append(f"{prefix}_{stat_name}_x_{scalar_name}")
+                all_names.append(f"{prefix}_{kn}_x_{scalar_name}")
 
     if not all_features:
         return np.empty((n_samples, 0), dtype=float), []
@@ -708,8 +730,11 @@ def extract_feature_bundle(prepared: dict[str, Any], method: str = "hybrid", top
         else:
             raise ValueError(f"Unsupported feature extraction method: {method}")
 
-        has_su_cov = any("_cov_flat_" in name for name in feature_names)
+        # Append physics-informed features when SU covariance columns exist (hybrid only)
+        has_su_cov = any("_cov_flat_" in n for n in feature_names)
         if has_su_cov and method_name == "hybrid":
+            # Use the original prepared features (pre-augmentation) for physics extraction,
+            # since physics features are derived from raw SU columns, not aggregated ones.
             raw_names = list(prepared["metadata"]["feature_names"])
             for split_label, split_x in [("train", train_x), ("val", val_x), ("test", test_x)]:
                 raw_x = splits[split_label]["X"]

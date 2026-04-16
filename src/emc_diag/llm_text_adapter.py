@@ -14,10 +14,13 @@ def _format_value(value: float) -> str:
     return f"{float(value):.6g}"
 
 
+# Ordered longest-first so substrings like phys_tmean_eig_max replace before phys_eig_max.
 _LLM_FEATURE_REPLACEMENTS: list[tuple[str, str]] = [
+    # Temporal blocks from temporal_cov physics (must come before shorter phys_* keys)
     ("phys_tmean_", "temporal_mean_"),
     ("phys_tstd_", "temporal_std_"),
     ("phys_tdelta_", "temporal_delta_"),
+    # Per-SU covariance physics (ED / MME / RLE / CAV style detectors)
     ("phys_eig_spread", "eigenvalue_spread"),
     ("phys_eig_max", "max_eigenvalue"),
     ("phys_eig_min", "min_eigenvalue"),
@@ -32,17 +35,22 @@ _LLM_FEATURE_REPLACEMENTS: list[tuple[str, str]] = [
 
 
 def _humanize_feature_name(name: str) -> str:
-    """Turn technical feature names into shorter, physics-oriented labels for LLM prompts."""
+    """Turn technical feature names into shorter, physics-oriented labels for LLM prompts.
 
+    Hybrid pipeline names may include SU*_cov_flat_*, cross_su_cov_*, and interaction *_x_*.
+    """
     result = name
     for raw, readable in _LLM_FEATURE_REPLACEMENTS:
         result = result.replace(raw, readable)
+    # Cross-SU and interaction phrasing
     result = result.replace("cross_su_cov_", "cross_sensor_")
     result = result.replace("_vs_", "_versus_")
+    # Interaction terms: scalar * detector statistic (no "phys_" prefix in name)
     result = result.replace("_trace_ed_x_", "_energy_detection_trace_times_")
     result = result.replace("_mme_x_", "_max_min_eigenvalue_ratio_times_")
     result = result.replace("_coherence_x_", "_signal_coherence_times_")
     result = result.replace("_x_", "_times_")
+    # Collapse duplicate underscores left by hybrid aggregates (e.g. SU1_cov_flat__mean)
     while "__" in result:
         result = result.replace("__", "_")
     return result
@@ -61,14 +69,18 @@ def tabular_matrix_to_texts(
     names = list(feature_names or [f"f{idx}" for idx in range(x.shape[1])])
     if len(names) != x.shape[1]:
         names = [f"f{idx}" for idx in range(x.shape[1])]
-    names = [_humanize_feature_name(name) for name in names]
+    # Physics / hybrid features: use readable names so the LLM sees ED/MME/RLE semantics.
+    names = [_humanize_feature_name(n) for n in names]
 
     active_feature_limit = int(feature_limit) if feature_limit is not None else None
     if active_feature_limit is not None and active_feature_limit > 0:
         names = names[:active_feature_limit]
         x = x[:, :active_feature_limit]
 
-    instruction = task_instruction or "Classify this EMC and cognitive radio sensing sample."
+    instruction = (
+        task_instruction
+        or "Classify this EMC and cognitive radio sensing sample."
+    )
     label_line = ""
     if label_descriptions:
         ordered_pairs = [

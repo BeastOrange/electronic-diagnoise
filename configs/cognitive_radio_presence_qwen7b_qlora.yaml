@@ -5,7 +5,7 @@ dataset:
   label_column: PU_Presence
 task:
   type: classification
-  task_name: pu_presence_qwen_qlora
+  task_name: pu_presence_qwen7b_qlora
   target_column: PU_Presence
   metric_primary: accuracy
   metric_secondary: f1
@@ -80,5 +80,5 @@ evaluation:
     enabled: true
     warning_threshold: 0.05
 runtime:
-  prepared_dir: ../artifacts/prepared_cognitive_presence_qwen_qlora
+  prepared_dir: ../artifacts/prepared_cognitive_presence_qwen7b_qlora
   artifacts_dir: ../artifacts/runs

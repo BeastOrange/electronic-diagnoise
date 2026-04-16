@@ -13,7 +13,7 @@ task:
     - time_index
     - PU_bandwidth
     - PU_burst_duration
-    - Frequency_Band
+    - PU_drift_type
 tasks:
   - name: presence
     task_name: pu_presence_main
@@ -24,7 +24,7 @@ tasks:
       - time_index
       - PU_bandwidth
       - PU_burst_duration
-      - Frequency_Band
+      - PU_drift_type
   - name: burst
     task_name: pu_burst_duration_aux
     target_column: PU_burst_duration

@@ -2,32 +2,32 @@ dataset:
   name: cognitive_radio_spectrum
   schema: tabular
   input_path: ../data/Cognitive Radio Spectrum Sensing Dataset.csv
-  label_column: PU_Presence
+  label_column: PU_drift_type
 task:
   type: classification
-  task_name: pu_presence_qwen_qlora
-  target_column: PU_Presence
+  task_name: pu_drift_type_qwen_local
+  target_column: PU_drift_type
   metric_primary: accuracy
   metric_secondary: f1
   drop_leakage_columns:
     - time_index
-    - PU_Signal_Strength
+    - PU_Presence
     - PU_bandwidth
     - PU_burst_duration
-    - PU_drift_type
 features:
   method: hybrid
-  top_k: 20
+  top_k: 60
 model:
   name: llm_qlora_classifier
   mode: single_task
-  epochs: 2
+  epochs: 4
   batch_size: 1
   learning_rate: 0.0001
   weight_decay: 0.01
-  patience: 2
+  patience: 3
+  class_weighting: balanced
   llm:
-    model_id: Qwen/Qwen2.5-7B-Instruct
+    model_id: /root/autodl-tmp/models/Qwen2.5-7B-Instruct
     max_length: 512
     lora_r: 8
     lora_alpha: 16
@@ -47,11 +47,11 @@ model:
     save_adapter_only: true
     gradient_checkpointing: true
     torch_dtype: float16
-    feature_limit: 16
-    task_instruction: Determine whether the primary user is present in this EMC and cognitive radio sensing sample.
+    feature_limit: 25
+    task_instruction: Classify the PU signal drift behavior type in this cognitive radio spectrum sensing sample based on the observed covariance features and detection statistics.
     label_descriptions:
-      "0": absent
-      "1": present
+      "0": Bandwidth switch
+      "1": Frequency drift
 trainer:
   train_ratio: 0.7
   val_ratio: 0.15
@@ -80,5 +80,5 @@ evaluation:
     enabled: true
     warning_threshold: 0.05
 runtime:
-  prepared_dir: ../artifacts/prepared_cognitive_presence_qwen_qlora
+  prepared_dir: ../artifacts/prepared_cognitive_drift_physics
   artifacts_dir: ../artifacts/runs

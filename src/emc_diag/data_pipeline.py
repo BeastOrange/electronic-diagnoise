@@ -569,9 +569,10 @@ def _split_indices(
 ) -> dict[str, np.ndarray]:
     """Split sample indices into train / val / test.
 
-    When labels are provided, preserve class proportions when possible.
+    When *y* is provided, uses stratified splitting so that each split
+    preserves the original class distribution.  Falls back to simple
+    random shuffle when *y* is ``None`` or has too few samples per class.
     """
-
     if not (0 < train_ratio < 1) or not (0 <= val_ratio < 1):
         raise ValueError("train_ratio must be in (0, 1) and val_ratio in [0, 1).")
     if train_ratio + val_ratio >= 1:
@@ -586,12 +587,18 @@ def _split_indices(
     if n_test <= 0:
         raise ValueError("Computed test split has zero size. Increase dataset size or change ratios.")
 
+    # Attempt stratified split when labels are available
     if y is not None:
         labels = np.asarray(y)
         classes, counts = np.unique(labels, return_counts=True)
-        if len(classes) >= 2 and counts.min() >= 3:
-            return _stratified_split_indices(labels, classes, n_train, n_val, random_state)
+        # Need at least 3 samples per class (one per split) to stratify
+        min_per_class = 3
+        if len(classes) >= 2 and counts.min() >= min_per_class:
+            return _stratified_split_indices(
+                labels, classes, n_train, n_val, random_state,
+            )
 
+    # Fallback: plain random shuffle
     rng = np.random.default_rng(random_state)
     indices = np.arange(n_samples)
     rng.shuffle(indices)
@@ -611,9 +618,9 @@ def _stratified_split_indices(
     random_state: int,
 ) -> dict[str, np.ndarray]:
     """Stratified train/val/test split preserving class proportions."""
-
     rng = np.random.default_rng(random_state)
     n_total = len(labels)
+    n_test = n_total - n_train - n_val
 
     train_indices: list[int] = []
     val_indices: list[int] = []
@@ -623,6 +630,7 @@ def _stratified_split_indices(
         cls_idx = np.flatnonzero(labels == cls)
         rng.shuffle(cls_idx)
         cls_n = len(cls_idx)
+        # Proportional allocation for this class
         cls_train = max(1, int(round(cls_n * n_train / n_total)))
         cls_val = max(1, int(round(cls_n * n_val / n_total)))
         cls_test = cls_n - cls_train - cls_val
@@ -631,17 +639,18 @@ def _stratified_split_indices(
             cls_train = cls_n - cls_val - cls_test
 
         train_indices.extend(cls_idx[:cls_train])
-        val_indices.extend(cls_idx[cls_train : cls_train + cls_val])
-        test_indices.extend(cls_idx[cls_train + cls_val :])
+        val_indices.extend(cls_idx[cls_train:cls_train + cls_val])
+        test_indices.extend(cls_idx[cls_train + cls_val:])
 
+    # Shuffle within each split to avoid class-ordered batches
     rng.shuffle(train_indices)
     rng.shuffle(val_indices)
     rng.shuffle(test_indices)
 
     return {
-        "train": np.asarray(train_indices, dtype=np.int64),
-        "val": np.asarray(val_indices, dtype=np.int64),
-        "test": np.asarray(test_indices, dtype=np.int64),
+        "train": np.array(train_indices, dtype=np.intp),
+        "val": np.array(val_indices, dtype=np.intp),
+        "test": np.array(test_indices, dtype=np.intp),
     }
 
 

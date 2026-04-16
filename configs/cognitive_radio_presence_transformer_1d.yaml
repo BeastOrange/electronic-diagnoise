@@ -14,7 +14,7 @@ task:
     - PU_Signal_Strength
     - PU_bandwidth
     - PU_burst_duration
-    - Frequency_Band
+    - PU_drift_type
 features:
   method: hybrid
   top_k: 48

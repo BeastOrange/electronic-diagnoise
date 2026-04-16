@@ -39,7 +39,10 @@ from emc_diag.feature_engineering import (
 from emc_diag.runtime import ensure_dir, resolve_device, timestamp_tag
 
 DEEP_MODEL_NAMES = {"cnn_1d", "cnn_1d_residual", "cnn_lstm", "transformer_1d", "cognitive_radio_hybrid", "cognitive_radio_scalar_hybrid"}
-LLM_MODEL_NAMES = {"qwen_qlora_classifier"}
+# Keep the historical Qwen name working, but allow new configs to use a
+# model-agnostic alias now that DeepSeek and future HF checkpoints share
+# the same QLoRA classification path.
+LLM_MODEL_NAMES = {"qwen_qlora_classifier", "llm_qlora_classifier"}
 QUICKSTART_DEFAULT_CONFIG = "configs/cognitive_radio_spectrum.yaml"
 QUICKSTART_CORE_RUN_FILES: tuple[tuple[str, str], ...] = (
     ("metrics.json", "model metrics and key scores"),
@@ -530,8 +533,17 @@ def _load_run_config(run_dir: Path) -> dict[str, Any]:
 
 def _call_with_supported_kwargs(func: Callable[..., Any], **kwargs: Any) -> Any:
     signature = inspect.signature(func)
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return func(**kwargs)
     accepted = {name: value for name, value in kwargs.items() if name in signature.parameters}
     return func(**accepted)
+
+
+def _signature_accepts_keyword(func: Callable[..., Any], keyword: str) -> bool:
+    signature = inspect.signature(func)
+    if keyword in signature.parameters:
+        return True
+    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 def _is_cuda_oom_error(exc: BaseException) -> bool:
@@ -544,8 +556,7 @@ def _call_with_batch_backoff(
     config: dict[str, Any],
     **kwargs: Any,
 ) -> Any:
-    signature = inspect.signature(func)
-    if "batch_size" not in signature.parameters or "batch_size" not in kwargs:
+    if not _signature_accepts_keyword(func, "batch_size") or "batch_size" not in kwargs:
         return _call_with_supported_kwargs(func, **kwargs)
 
     current_batch = int(kwargs["batch_size"])
@@ -1766,6 +1777,7 @@ def _execute_training(
         resolved_device = result["resolved_device"]
     elif _is_llm_model_name(config["model"]["name"]):
         llm_config = dict(config["model"].get("llm", {}))
+        llm_config.setdefault("classifier_name", str(config["model"]["name"]))
         result = _call_with_batch_backoff(
             modeling.train_qwen_qlora_classifier,
             config,
@@ -1780,6 +1792,7 @@ def _execute_training(
             random_seed=config["trainer"]["random_state"],
             weight_decay=config["model"].get("weight_decay", 0.0),
             patience=config["model"].get("patience"),
+            class_weighting=config["model"].get("class_weighting"),
             feature_names=list(feature_bundle.get("selected_feature_names", [])),
             progress=progress,
             **llm_config,

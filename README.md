@@ -446,6 +446,51 @@ uv run python -m emc_diag train --config configs/cognitive_radio_presence_cnn.ya
 
 > 我现在在训练模型，让模型根据数据学习分类规则。训练完成后会生成一个运行目录，后续评估和图表都会从这个目录读取结果。
 
+### 12.1 如果老师要求必须体现“开源大模型专项训练”
+
+你可以直接运行下面这条主线：
+
+```bash
+uv sync --dev --group llm
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_DISABLE_XET=1
+uv run python -m emc_diag prepare --config configs/cognitive_radio_presence_qwen_qlora.yaml
+uv run python -m emc_diag extract-features --config configs/cognitive_radio_presence_qwen_qlora.yaml
+uv run python -m emc_diag train --config configs/cognitive_radio_presence_qwen_qlora.yaml --device cuda
+```
+
+这条配置现在默认会走：
+
+- 开源模型：`Qwen/Qwen2.5-7B-Instruct`
+- 训练方式：`4bit QLoRA`
+- 主任务：`PU_Presence`
+- 文本提示：`hybrid` 特征工程会附带认知无线电物理统计量（如能量检测 trace、MME/RLE 等）；`tabular_matrix_to_texts` 会把 `phys_mme`、`cross_su_cov_*`、`*_mme_x_*` 等列名转成英文可读名称，便于大模型理解谱感知语义
+
+如果你想换成 `DeepSeek`，使用：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_DISABLE_XET=1
+uv run python -m emc_diag prepare --config configs/cognitive_radio_presence_deepseek7b_qlora.yaml
+uv run python -m emc_diag extract-features --config configs/cognitive_radio_presence_deepseek7b_qlora.yaml
+uv run python -m emc_diag train --config configs/cognitive_radio_presence_deepseek7b_qlora.yaml --device cuda
+```
+
+如果你的服务器只能连国内网络，就保留这两个环境变量再运行训练命令。
+这里使用的是 `hf-mirror.com`。
+
+你可以这样向老师解释：
+
+> 现在这个项目不只是传统机器学习。  
+> 我把电磁/无线信号特征转换成结构化文本，再用开源大模型 `Qwen` 或 `DeepSeek` 做针对 `PU_Presence` 的专项微调。  
+> 这样更能体现这是“基于 AI 的电磁兼容研究”，而且训练产物会保存成 LoRA adapter，方便复现和对比。
+
+这里要注意：
+
+- `4090D 24GB` 不适合做 `7B` 全量微调
+- 现在采用的是更现实的 `7B + 4bit QLoRA`
+- 这是当前服务器最稳妥、最容易跑通的方案
+
 ---
 
 ## 13. 第五步：评估模型效果
@@ -618,6 +663,19 @@ uv run python -m emc_diag export-report --run-dir artifacts/runs/<run-id> --form
   - 论文主任务 `PU_Presence`
   - 最适合新手先跑这个
 
+- `configs/cognitive_radio_presence_qwen_qlora.yaml`
+  - 开源大模型主线配置
+  - 默认使用 `Qwen2.5-7B-Instruct + 4bit QLoRA`
+  - 适合向老师展示“已经在做开源模型专项训练”
+
+- `configs/cognitive_radio_presence_qwen7b_qlora.yaml`
+  - 显式的 `Qwen 7B` 配置
+  - 适合单独保留 Qwen 实验记录
+
+- `configs/cognitive_radio_presence_deepseek7b_qlora.yaml`
+  - 显式的 `DeepSeek 7B` 配置
+  - 适合做开源模型对比
+
 - `configs/cognitive_radio_presence_cnn_cv.yaml`
   - 更适合做交叉验证和消融分析
 
@@ -633,6 +691,10 @@ uv run python -m emc_diag export-report --run-dir artifacts/runs/<run-id> --form
 如果你完全不知道先跑哪个：
 
 > 先跑 `configs/cognitive_radio_presence_cnn.yaml`
+
+如果老师明确要求体现开源大模型训练：
+
+> 先跑 `configs/cognitive_radio_presence_qwen_qlora.yaml`
 
 ---
 

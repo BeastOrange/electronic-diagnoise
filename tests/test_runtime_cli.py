@@ -9,7 +9,14 @@ import pandas as pd
 import pytest
 import yaml
 
-from emc_diag.cli import _call_with_batch_backoff, _expand_benchmark_variants, _model_family_for_name, main
+from emc_diag.cli import (
+    _call_with_batch_backoff,
+    _execute_training,
+    _expand_benchmark_variants,
+    _load_prepared_bundle,
+    _model_family_for_name,
+    main,
+)
 from emc_diag.config import load_config
 from emc_diag.runtime import resolve_device
 
@@ -662,6 +669,57 @@ def _write_qwen_benchmark_matrix_config(config_path: Path, raw_data_path: Path, 
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
+def _write_llm_config(config_path: Path, raw_data_path: Path, prepared_dir: Path) -> None:
+    config = {
+        "dataset": {
+            "name": "synthetic_binary_llm",
+            "schema": "tabular",
+            "input_path": str(raw_data_path),
+            "label_column": "label",
+        },
+        "task": {
+            "type": "classification",
+            "task_name": "synthetic_binary_llm",
+            "target_column": "label",
+            "metric_primary": "accuracy",
+            "metric_secondary": "f1",
+            "drop_leakage_columns": [],
+        },
+        "features": {"method": "hybrid", "top_k": 3},
+        "model": {
+            "name": "llm_qlora_classifier",
+            "epochs": 1,
+            "batch_size": 2,
+            "learning_rate": 0.0002,
+            "class_weighting": "balanced",
+            "llm": {
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "max_length": 128,
+                "load_in_4bit": False,
+                "gradient_accumulation_steps": 1,
+                "save_adapter_only": True,
+            },
+        },
+        "trainer": {"train_ratio": 0.7, "val_ratio": 0.15, "random_state": 9},
+        "metrics": {"primary": "accuracy"},
+        "visualization": {"theme": "paper-bar"},
+        "evaluation": {"threshold_tuning": {"enabled": False}},
+        "runtime": {
+            "prepared_dir": str(prepared_dir),
+            "artifacts_dir": str(prepared_dir / "artifacts"),
+        },
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
+class _FakeLlmPredictor:
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        return np.tile(np.asarray([[0.8, 0.2]], dtype=float), (len(x), 1))
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        return np.zeros(len(x), dtype=np.int64)
+
+
 def test_resolve_device_prefers_cpu_when_requested() -> None:
     assert resolve_device("cpu") == "cpu"
 
@@ -764,12 +822,76 @@ def test_load_config_exposes_llm_defaults(tmp_path: Path) -> None:
     loaded = load_config(config_path)
 
     assert loaded["model"]["name"] == "qwen_qlora_classifier"
-    assert loaded["model"]["llm"]["model_id"].startswith("Qwen/")
+    assert loaded["model"]["llm"]["model_id"] == "Qwen/Qwen2.5-7B-Instruct"
     assert loaded["model"]["llm"]["load_in_4bit"] is True
+
+
+def test_load_config_preserves_generic_llm_qlora_overrides(tmp_path: Path) -> None:
+    config_path = tmp_path / "deepseek_defaults.yaml"
+    config = {
+        "dataset": {
+            "name": "synthetic_emi",
+            "schema": "tabular",
+            "input_path": "synthetic.csv",
+            "label_column": "label",
+        },
+        "task": {
+            "task_name": "deepseek_defaults",
+            "target_column": "label",
+        },
+        "model": {
+            "name": "llm_qlora_classifier",
+            "llm": {
+                "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+                "target_modules": ["q_proj", "v_proj"],
+                "gradient_checkpointing": True,
+                "torch_dtype": "float16",
+                "feature_limit": 12,
+                "task_instruction": "Determine whether the primary user is present.",
+                "label_descriptions": {
+                    "0": "absent",
+                    "1": "present",
+                },
+            },
+        },
+        "runtime": {
+            "prepared_dir": "prepared",
+            "artifacts_dir": "artifacts",
+        },
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    loaded = load_config(config_path)
+
+    assert loaded["model"]["name"] == "llm_qlora_classifier"
+    assert loaded["model"]["llm"]["model_id"] == "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+    assert loaded["model"]["llm"]["target_modules"] == ["q_proj", "v_proj"]
+    assert loaded["model"]["llm"]["gradient_checkpointing"] is True
+    assert loaded["model"]["llm"]["torch_dtype"] == "float16"
+    assert loaded["model"]["llm"]["feature_limit"] == 12
+    assert loaded["model"]["llm"]["task_instruction"] == "Determine whether the primary user is present."
+    assert loaded["model"]["llm"]["label_descriptions"] == {"0": "absent", "1": "present"}
 
 
 def test_model_family_marks_qwen_as_llm() -> None:
     assert _model_family_for_name("qwen_qlora_classifier") == "llm"
+    assert _model_family_for_name("llm_qlora_classifier") == "llm"
+
+
+def test_project_7b_llm_configs_load_expected_foundation_models() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    qwen_config = load_config(project_root / "configs" / "cognitive_radio_presence_qwen7b_qlora.yaml")
+    deepseek_config = load_config(project_root / "configs" / "cognitive_radio_presence_deepseek7b_qlora.yaml")
+
+    assert qwen_config["model"]["name"] == "llm_qlora_classifier"
+    assert qwen_config["model"]["llm"]["model_id"] == "Qwen/Qwen2.5-7B-Instruct"
+    assert qwen_config["model"]["llm"]["gradient_checkpointing"] is True
+    assert qwen_config["model"]["llm"]["feature_limit"] == 16
+
+    assert deepseek_config["model"]["name"] == "llm_qlora_classifier"
+    assert deepseek_config["model"]["llm"]["model_id"] == "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+    assert deepseek_config["model"]["llm"]["gradient_checkpointing"] is True
+    assert deepseek_config["model"]["llm"]["feature_limit"] == 16
 
 
 def test_expand_benchmark_variants_supports_seed_mode_and_transfer_strategy(tmp_path: Path) -> None:
@@ -830,6 +952,66 @@ def test_call_with_batch_backoff_retries_on_cuda_oom() -> None:
 
     assert result == 8
     assert attempts == [32, 16, 8]
+
+
+def test_call_with_batch_backoff_preserves_kwargs_for_wrapper_functions() -> None:
+    captured: dict[str, object] = {}
+
+    def _wrapper(*args: object, **kwargs: object) -> dict[str, object]:
+        _ = args
+        captured.update(kwargs)
+        return captured
+
+    result = _call_with_batch_backoff(
+        _wrapper,
+        {"trainer": {"min_batch_size": 1, "oom_retries": 1, "oom_backoff_factor": 0.5}},
+        x_train=[[1.0]],
+        y_train=[1],
+        x_val=[[0.0]],
+        y_val=[0],
+        batch_size=1,
+    )
+
+    assert result["x_train"] == [[1.0]]
+    assert result["y_train"] == [1]
+    assert result["x_val"] == [[0.0]]
+    assert result["y_val"] == [0]
+
+
+def test_execute_training_forwards_class_weighting_to_llm_trainer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw_data_path = tmp_path / "synthetic_binary_llm.csv"
+    prepared_dir = tmp_path / "prepared_llm"
+    config_path = tmp_path / "llm_config.yaml"
+    _write_synthetic_binary_dataset(raw_data_path)
+    _write_llm_config(config_path, raw_data_path, prepared_dir)
+
+    assert main(["prepare", "--config", str(config_path)]) == 0
+    assert main(["extract-features", "--config", str(config_path)]) == 0
+
+    captured: dict[str, object] = {}
+
+    def _fake_train_qwen_qlora_classifier(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "model": _FakeLlmPredictor(),
+            "model_name": "llm_qlora_classifier",
+            "resolved_device": "cpu",
+            "train_history": {},
+            "epochs_ran": 1,
+            "best_checkpoint": {"epoch": 1, "best_epoch": 0, "val_loss": 0.1, "stopped_early": False},
+            "llm_info": {},
+        }
+
+    monkeypatch.setattr(
+        "emc_diag.cli._load_modeling_module",
+        lambda: type("FakeModelingModule", (), {"train_qwen_qlora_classifier": staticmethod(_fake_train_qwen_qlora_classifier)})(),
+    )
+
+    config = load_config(config_path)
+    prepared = _load_prepared_bundle(prepared_dir)
+    _execute_training(config, prepared, requested_device="cpu")
+
+    assert captured["class_weighting"] == "balanced"
 
 
 def test_cli_smoke_pipeline_generates_artifacts(tmp_path: Path) -> None:
