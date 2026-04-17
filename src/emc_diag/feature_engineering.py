@@ -9,6 +9,7 @@ import numpy as np
 SEQUENCE_LAYOUTS = {"all", "basic_only", "cov_flat_only", "temporal_cov_only"}
 _PREFIX_INDEX_PATTERN = re.compile(r"^(?P<prefix>.+)_(?P<index>\d+)$")
 _COGNITIVE_STRUCTURED_PATTERN = re.compile(r"^(?P<prefix>SU\d+_(?:cov_flat|temporal_cov))_(?P<index>\d+)$")
+_ELECTRICAL_PHASE_COLUMNS = ("Ia", "Ib", "Ic", "Va", "Vb", "Vc")
 
 # Number of elements per covariance sub-block (2x2 complex Hermitian, flattened)
 _COV_BLOCK_SIZE = 8
@@ -187,6 +188,114 @@ def _augment_tabular_with_prefix_aggregates(
         np.hstack([test_x, test_agg]),
         augmented_names,
     )
+
+
+def _extract_electrical_fault_features(
+    matrix: np.ndarray,
+    feature_names: list[str],
+) -> tuple[np.ndarray, list[str]]:
+    if not all(column in feature_names for column in _ELECTRICAL_PHASE_COLUMNS):
+        return np.empty((matrix.shape[0], 0), dtype=float), []
+
+    feature_index = {name: idx for idx, name in enumerate(feature_names)}
+    current = np.column_stack(
+        [
+            matrix[:, feature_index["Ia"]],
+            matrix[:, feature_index["Ib"]],
+            matrix[:, feature_index["Ic"]],
+        ]
+    )
+    voltage = np.column_stack(
+        [
+            matrix[:, feature_index["Va"]],
+            matrix[:, feature_index["Vb"]],
+            matrix[:, feature_index["Vc"]],
+        ]
+    )
+
+    eps = 1e-12
+    current_abs = np.abs(current)
+    voltage_abs = np.abs(voltage)
+    current_abs_mean = np.mean(current_abs, axis=1, keepdims=True)
+    voltage_abs_mean = np.mean(voltage_abs, axis=1, keepdims=True)
+    current_rms = np.sqrt(np.mean(np.square(current), axis=1, keepdims=True))
+    voltage_rms = np.sqrt(np.mean(np.square(voltage), axis=1, keepdims=True))
+    current_unbalance = np.std(current, axis=1, keepdims=True) / np.maximum(current_abs_mean, eps)
+    voltage_unbalance = np.std(voltage, axis=1, keepdims=True) / np.maximum(voltage_abs_mean, eps)
+    current_range = np.ptp(current, axis=1, keepdims=True)
+    voltage_range = np.ptp(voltage, axis=1, keepdims=True)
+    current_sum = np.sum(current, axis=1, keepdims=True)
+    voltage_sum = np.sum(voltage, axis=1, keepdims=True)
+    max_current_ratio = np.max(current_abs, axis=1, keepdims=True) / np.maximum(current_abs_mean, eps)
+    max_voltage_ratio = np.max(voltage_abs, axis=1, keepdims=True) / np.maximum(voltage_abs_mean, eps)
+
+    current_pairwise = np.column_stack(
+        [
+            np.abs(current[:, 0] - current[:, 1]),
+            np.abs(current[:, 1] - current[:, 2]),
+            np.abs(current[:, 0] - current[:, 2]),
+        ]
+    )
+    voltage_pairwise = np.column_stack(
+        [
+            np.abs(voltage[:, 0] - voltage[:, 1]),
+            np.abs(voltage[:, 1] - voltage[:, 2]),
+            np.abs(voltage[:, 0] - voltage[:, 2]),
+        ]
+    )
+
+    apparent_power = current_abs * voltage_abs
+    power_like_total = np.sum(apparent_power, axis=1, keepdims=True)
+    power_like_unbalance = np.std(apparent_power, axis=1, keepdims=True) / np.maximum(
+        np.mean(apparent_power, axis=1, keepdims=True),
+        eps,
+    )
+    current_voltage_alignment = np.sum(current * voltage, axis=1, keepdims=True) / np.maximum(
+        np.linalg.norm(current, axis=1, keepdims=True) * np.linalg.norm(voltage, axis=1, keepdims=True),
+        eps,
+    )
+
+    features = np.hstack(
+        [
+            current_rms,
+            voltage_rms,
+            current_unbalance,
+            voltage_unbalance,
+            current_range,
+            voltage_range,
+            current_sum,
+            voltage_sum,
+            max_current_ratio,
+            max_voltage_ratio,
+            current_pairwise,
+            voltage_pairwise,
+            power_like_total,
+            power_like_unbalance,
+            current_voltage_alignment,
+        ]
+    )
+    names = [
+        "emc_three_phase_current_rms",
+        "emc_three_phase_voltage_rms",
+        "emc_current_unbalance",
+        "emc_voltage_unbalance",
+        "emc_current_range",
+        "emc_voltage_range",
+        "emc_current_sum",
+        "emc_voltage_sum",
+        "emc_max_current_ratio",
+        "emc_max_voltage_ratio",
+        "emc_current_diff_ab",
+        "emc_current_diff_bc",
+        "emc_current_diff_ac",
+        "emc_voltage_diff_ab",
+        "emc_voltage_diff_bc",
+        "emc_voltage_diff_ac",
+        "emc_power_like_total",
+        "emc_power_like_unbalance",
+        "emc_current_voltage_alignment",
+    ]
+    return features, names
 
 
 def _reconstruct_hermitian_2x2(block: np.ndarray) -> np.ndarray:
@@ -769,6 +878,15 @@ def extract_feature_bundle(prepared: dict[str, Any], method: str = "hybrid", top
                     val_x = np.hstack([split_x, phys_feats])
                 else:
                     test_x = np.hstack([split_x, phys_feats])
+
+        electrical_feats_train, electrical_names = _extract_electrical_fault_features(train_x, feature_names)
+        if electrical_names:
+            electrical_feats_val, _ = _extract_electrical_fault_features(val_x, feature_names)
+            electrical_feats_test, _ = _extract_electrical_fault_features(test_x, feature_names)
+            train_x = np.hstack([train_x, electrical_feats_train])
+            val_x = np.hstack([val_x, electrical_feats_val])
+            test_x = np.hstack([test_x, electrical_feats_test])
+            feature_names = feature_names + electrical_names
 
     scores = _compute_feature_scores(train_x, splits["train"]["y"])
     order = np.argsort(scores)[::-1]

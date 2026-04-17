@@ -369,6 +369,45 @@ def test_extract_feature_bundle_collapses_repeated_temporal_cov_blocks() -> None
     assert not any(name.startswith("SU1_temporal_cov_phys_tdelta_") for name in names)
 
 
+def test_extract_feature_bundle_adds_electrical_fault_derived_features() -> None:
+    prepared = {
+        "metadata": {
+            "schema": "tabular",
+            "feature_names": ["Ia", "Ib", "Ic", "Va", "Vb", "Vc"],
+        },
+        "splits": {
+            "train": {
+                "X": np.array(
+                    [
+                        [1.0, 0.8, 1.2, 0.2, -0.1, -0.1],
+                        [3.0, 2.9, 0.1, 0.4, -0.3, -0.1],
+                        [0.5, 0.4, 0.6, 0.1, -0.05, -0.05],
+                    ],
+                    dtype=float,
+                ),
+                "y": np.array([0, 1, 0], dtype=int),
+            },
+            "val": {
+                "X": np.array([[1.5, 1.4, 1.1, 0.2, -0.15, -0.05]], dtype=float),
+                "y": np.array([1], dtype=int),
+            },
+            "test": {
+                "X": np.array([[0.9, 0.85, 0.95, 0.12, -0.06, -0.06]], dtype=float),
+                "y": np.array([0], dtype=int),
+            },
+        },
+    }
+
+    bundle = extract_feature_bundle(prepared, method="hybrid", top_k=None)
+    names = bundle["feature_names"]
+
+    assert "emc_current_unbalance" in names
+    assert "emc_voltage_unbalance" in names
+    assert "emc_current_diff_ab" in names
+    assert "emc_power_like_total" in names
+    assert "emc_current_voltage_alignment" in names
+
+
 def test_prepare_dataset_encodes_string_targets_and_tracks_labels(tmp_path: Path) -> None:
     data = pd.DataFrame(
         {

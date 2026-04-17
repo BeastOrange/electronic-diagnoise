@@ -1,0 +1,79 @@
+dataset:
+  name: electrical_fault_detection
+  schema: tabular
+  input_path: ../data/electrical_fault_detection/detect_dataset.csv
+  label_column: Output (S)
+task:
+  type: classification
+  task_name: electrical_fault_binary_qwen
+  target_column: Output (S)
+  metric_primary: accuracy
+  metric_secondary: f1
+features:
+  method: hybrid
+  top_k: full
+model:
+  name: llm_qlora_classifier
+  mode: single_task
+  epochs: 6
+  batch_size: 1
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  patience: 3
+  class_weighting: balanced
+  llm:
+    model_id: /root/autodl-tmp/models/Qwen2.5-7B-Instruct
+    max_length: 384
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    load_in_4bit: true
+    bnb_4bit_quant_type: nf4
+    gradient_accumulation_steps: 16
+    warmup_ratio: 0.03
+    save_adapter_only: true
+    gradient_checkpointing: true
+    torch_dtype: float16
+    feature_limit: null
+    task_instruction: Diagnose whether this EMC-related electrical sample indicates a fault condition based on three-phase current, voltage, and derived imbalance statistics.
+    label_descriptions:
+      "0": normal operating state without detected electrical fault
+      "1": abnormal electrical fault condition with EMC-relevant phase imbalance signature
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: accuracy
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: true
+    metric: f1
+    grid:
+      - 0.40
+      - 0.45
+      - 0.50
+      - 0.55
+      - 0.60
+  cross_validation:
+    enabled: false
+  learning_curve:
+    enabled: false
+  ablation:
+    enabled: false
+  risk_checks:
+    enabled: true
+    warning_threshold: 0.05
+runtime:
+  prepared_dir: ../artifacts/prepared_electrical_fault_binary_qwen
+  artifacts_dir: ../artifacts/runs

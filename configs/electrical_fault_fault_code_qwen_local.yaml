@@ -1,0 +1,81 @@
+dataset:
+  name: electrical_fault_detection
+  schema: tabular
+  input_path: ../data/electrical_fault_detection/classData_fault_code.csv
+  label_column: fault_code
+task:
+  type: classification
+  task_name: electrical_fault_fault_code_qwen
+  target_column: fault_code
+  metric_primary: macro_f1
+  metric_secondary: accuracy
+  drop_leakage_columns:
+    - G
+    - C
+    - B
+    - A
+features:
+  method: hybrid
+  top_k: full
+model:
+  name: llm_qlora_classifier
+  mode: single_task
+  epochs: 6
+  batch_size: 1
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  patience: 3
+  class_weighting: balanced
+  llm:
+    model_id: /root/autodl-tmp/models/Qwen2.5-7B-Instruct
+    max_length: 384
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    load_in_4bit: true
+    bnb_4bit_quant_type: nf4
+    gradient_accumulation_steps: 16
+    warmup_ratio: 0.03
+    save_adapter_only: true
+    gradient_checkpointing: true
+    torch_dtype: float16
+    feature_limit: null
+    task_instruction: Classify the EMC-related electrical fault pattern of this three-phase sample using phase currents, phase voltages, and derived imbalance indicators.
+    label_descriptions:
+      "0": fault_0000 normal balanced operating state
+      "1": fault_0110 phase B-C line fault signature without ground indicator
+      "2": fault_0111 three-phase fault signature without ground indicator
+      "3": fault_1001 phase A-to-ground asymmetrical fault signature
+      "4": fault_1011 multi-phase ground-coupled fault signature involving phases A and C
+      "5": fault_1111 severe three-phase ground-coupled fault signature
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: macro_f1
+visualization:
+  theme: paper-bar
+evaluation:
+  threshold_tuning:
+    enabled: false
+  cross_validation:
+    enabled: false
+  learning_curve:
+    enabled: false
+  ablation:
+    enabled: false
+  risk_checks:
+    enabled: true
+    warning_threshold: 0.05
+runtime:
+  prepared_dir: ../artifacts/prepared_electrical_fault_fault_code_qwen
+  artifacts_dir: ../artifacts/runs

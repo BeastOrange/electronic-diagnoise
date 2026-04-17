@@ -31,7 +31,36 @@ _LLM_FEATURE_REPLACEMENTS: list[tuple[str, str]] = [
     ("phys_coherence", "signal_coherence"),
     ("phys_log_det", "log_determinant"),
     ("phys_det", "determinant"),
+    # Electrical fault / EMC derived statistics
+    ("emc_three_phase_current_rms", "three_phase_current_rms"),
+    ("emc_three_phase_voltage_rms", "three_phase_voltage_rms"),
+    ("emc_current_unbalance", "current_unbalance_ratio"),
+    ("emc_voltage_unbalance", "voltage_unbalance_ratio"),
+    ("emc_current_range", "current_range"),
+    ("emc_voltage_range", "voltage_range"),
+    ("emc_current_sum", "current_sum"),
+    ("emc_voltage_sum", "voltage_sum"),
+    ("emc_max_current_ratio", "max_current_to_mean_ratio"),
+    ("emc_max_voltage_ratio", "max_voltage_to_mean_ratio"),
+    ("emc_current_diff_ab", "phase_ab_current_difference"),
+    ("emc_current_diff_bc", "phase_bc_current_difference"),
+    ("emc_current_diff_ac", "phase_ac_current_difference"),
+    ("emc_voltage_diff_ab", "phase_ab_voltage_difference"),
+    ("emc_voltage_diff_bc", "phase_bc_voltage_difference"),
+    ("emc_voltage_diff_ac", "phase_ac_voltage_difference"),
+    ("emc_power_like_total", "three_phase_apparent_power_proxy"),
+    ("emc_power_like_unbalance", "power_proxy_unbalance_ratio"),
+    ("emc_current_voltage_alignment", "current_voltage_alignment"),
 ]
+
+_LLM_EXACT_FEATURE_ALIASES: dict[str, str] = {
+    "Ia": "phase_a_current",
+    "Ib": "phase_b_current",
+    "Ic": "phase_c_current",
+    "Va": "phase_a_voltage",
+    "Vb": "phase_b_voltage",
+    "Vc": "phase_c_voltage",
+}
 
 
 def _humanize_feature_name(name: str) -> str:
@@ -39,6 +68,9 @@ def _humanize_feature_name(name: str) -> str:
 
     Hybrid pipeline names may include SU*_cov_flat_*, cross_su_cov_*, and interaction *_x_*.
     """
+    if name in _LLM_EXACT_FEATURE_ALIASES:
+        return _LLM_EXACT_FEATURE_ALIASES[name]
+
     result = name
     for raw, readable in _LLM_FEATURE_REPLACEMENTS:
         result = result.replace(raw, readable)

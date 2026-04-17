@@ -57,3 +57,17 @@ def test_tabular_matrix_to_texts_humanizes_physics_feature_names() -> None:
 def test_tabular_matrix_to_texts_requires_2d_matrix() -> None:
     with pytest.raises(ValueError, match="Expected 2D matrix"):
         tabular_matrix_to_texts(np.asarray([1.0, 2.0], dtype=float))
+
+
+def test_tabular_matrix_to_texts_humanizes_electrical_fault_features() -> None:
+    matrix = np.asarray([[1.0, 2.0, 3.0, 0.2]], dtype=float)
+    names = ["Ia", "Vb", "emc_current_unbalance", "emc_current_voltage_alignment"]
+
+    texts = tabular_matrix_to_texts(matrix, names)
+
+    assert len(texts) == 1
+    body = texts[0]
+    assert "phase_a_current=1" in body
+    assert "phase_b_voltage=2" in body
+    assert "current_unbalance_ratio=3" in body
+    assert "current_voltage_alignment=0.2" in body
