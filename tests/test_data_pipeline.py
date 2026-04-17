@@ -334,6 +334,41 @@ def test_extract_feature_bundle_basic_method_keeps_raw_tabular_features() -> Non
     assert bundle["splits"]["train"]["X"].shape[1] == 3
 
 
+def test_extract_feature_bundle_collapses_repeated_temporal_cov_blocks() -> None:
+    cov_block_a = np.array([4.0, 0.5, 0.5, 4.0, 0.0, -0.2, 0.2, 0.0], dtype=float)
+    cov_block_b = np.array([2.0, 0.25, 0.25, 2.0, 0.0, -0.1, 0.1, 0.0], dtype=float)
+    temporal_a = np.tile(cov_block_a, 4)
+    temporal_b = np.tile(cov_block_b, 4)
+
+    train_x = np.vstack([
+        np.concatenate([cov_block_a, temporal_a, [0.5]]),
+        np.concatenate([cov_block_b, temporal_b, [0.3]]),
+    ]).astype(float)
+    val_x = np.vstack([np.concatenate([cov_block_a, temporal_a, [0.4]])]).astype(float)
+    test_x = np.vstack([np.concatenate([cov_block_b, temporal_b, [0.6]])]).astype(float)
+
+    feature_names = (
+        [f"SU1_cov_flat_{idx}" for idx in range(8)]
+        + [f"SU1_temporal_cov_{idx}" for idx in range(32)]
+        + ["power_dB"]
+    )
+    prepared = {
+        "metadata": {"schema": "tabular", "feature_names": feature_names},
+        "splits": {
+            "train": {"X": train_x, "y": np.array([0, 1], dtype=int)},
+            "val": {"X": val_x, "y": np.array([1], dtype=int)},
+            "test": {"X": test_x, "y": np.array([0], dtype=int)},
+        },
+    }
+
+    bundle = extract_feature_bundle(prepared, top_k=None)
+    names = bundle["feature_names"]
+
+    assert "SU1_temporal_cov_phys_tmean_trace_ed" in names
+    assert not any(name.startswith("SU1_temporal_cov_phys_tstd_") for name in names)
+    assert not any(name.startswith("SU1_temporal_cov_phys_tdelta_") for name in names)
+
+
 def test_prepare_dataset_encodes_string_targets_and_tracks_labels(tmp_path: Path) -> None:
     data = pd.DataFrame(
         {

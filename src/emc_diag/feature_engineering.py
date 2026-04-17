@@ -293,6 +293,18 @@ def _collect_su_columns(
     return result
 
 
+def _repeated_temporal_blocks(block: np.ndarray) -> bool:
+    """Return True when temporal_cov is exact repetition of the same 8-d block."""
+    if block.ndim != 2 or block.shape[1] < _COV_BLOCK_SIZE or block.shape[1] % _COV_BLOCK_SIZE != 0:
+        return False
+    n_blocks = block.shape[1] // _COV_BLOCK_SIZE
+    if n_blocks <= 1:
+        return False
+    reshaped = block.reshape(block.shape[0], n_blocks, _COV_BLOCK_SIZE)
+    reference = reshaped[:, :1, :]
+    return bool(np.allclose(reshaped, reference))
+
+
 def _extract_cognitive_radio_physics_features(
     matrix: np.ndarray,
     feature_names: list[str],
@@ -339,6 +351,17 @@ def _extract_cognitive_radio_physics_features(
         block = matrix[:, col_indices]
         n_blocks = block.shape[1] // _COV_BLOCK_SIZE
         if n_blocks >= 1 and block.shape[1] == n_blocks * _COV_BLOCK_SIZE:
+            # Some datasets duplicate the same 8-d covariance block 4 times.
+            # Treat those as a single block instead of fabricating zero-variance
+            # temporal aggregates.
+            if _repeated_temporal_blocks(block):
+                cov_mat = _reconstruct_hermitian_2x2(block[:, :_COV_BLOCK_SIZE])
+                feats, names = _hermitian_2x2_features(cov_mat, prefix + "_phys_tmean")
+                all_features.append(feats)
+                all_names.extend(names)
+                su_temp_stats[prefix] = feats
+                continue
+
             # Process each time-window sub-block
             sub_features_list = []
             for bi in range(n_blocks):
