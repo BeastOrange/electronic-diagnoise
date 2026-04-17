@@ -31,26 +31,26 @@ features:
 model:
   name: llm_qlora_classifier
   mode: single_task
-  epochs: 4
-  batch_size: 1
+  epochs: 2
+  batch_size: 2
   learning_rate: 0.0001
   weight_decay: 0.01
-  patience: 3
+  patience: 1
   class_weighting: balanced
   llm:
     model_id: Qwen/Qwen2.5-7B-Instruct
-    max_length: 384
+    max_length: 256
     lora_r: 8
     lora_alpha: 16
     lora_dropout: 0.05
     load_in_4bit: true
     bnb_4bit_quant_type: nf4
-    gradient_accumulation_steps: 16
+    gradient_accumulation_steps: 8
     warmup_ratio: 0.03
     save_adapter_only: true
     gradient_checkpointing: true
     torch_dtype: float16
-    feature_limit: null
+    feature_limit: 18
 benchmark:
   matrix:
     tasks:
