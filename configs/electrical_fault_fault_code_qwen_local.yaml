@@ -27,7 +27,7 @@ model:
   patience: 3
   class_weighting: balanced
   llm:
-    model_id: /root/autodl-tmp/models/Qwen2.5-7B-Instruct
+    model_id: Qwen/Qwen2.5-7B-Instruct
     max_length: 384
     lora_r: 8
     lora_alpha: 16
