@@ -5,7 +5,7 @@ dataset:
   label_column: Output (S)
 task:
   type: classification
-  task_name: electrical_fault_binary_legacy
+  task_name: electrical_fault_binary_rf
   target_column: Output (S)
   metric_primary: accuracy
   metric_secondary: f1
@@ -14,6 +14,9 @@ features:
   top_k: full
 model:
   name: random_forest
+  candidates:
+    - random_forest
+    - bagged_logistic_regression
 trainer:
   train_ratio: 0.7
   val_ratio: 0.15
@@ -27,5 +30,5 @@ evaluation:
     enabled: true
     folds: 5
 runtime:
-  prepared_dir: ../artifacts/prepared_electrical_fault_binary_legacy
+  prepared_dir: ../artifacts/prepared_electrical_fault_binary_rf
   artifacts_dir: ../artifacts/runs

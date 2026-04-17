@@ -13,9 +13,16 @@
 ## Additional Local Dataset
 
 - `Electrical Fault detection and classification`
-  - Local path: `data/Electrical Fault detection and classification/`
-  - Recommended file for immediate experiments: `detect_dataset.csv`
-  - Recommended role: proxy dataset for robustness and generalization comparison.
+  - Raw download may appear under the repository root with irregular whitespace in the folder name.
+  - Normalize it first with:
+    ```bash
+    uv run python scripts/normalize_electrical_fault_dataset.py
+    ```
+  - Normalized local path: `data/electrical_fault_detection/`
+  - Ready-to-run files:
+    - `detect_dataset.csv`: binary fault detection
+    - `classData_fault_code.csv`: 6-class fault-code classification
+  - Recommended role: fast recovery line for customer-facing strong results.
 
 ## EMC/EMI Supplement Dataset
 
@@ -50,6 +57,13 @@
   - CLI hint:
     ```bash
     kaggle datasets download -d esathyaprakash/electrical-fault-detection-and-classification
+    ```
+  - Recommended run order:
+    ```bash
+    uv run python scripts/normalize_electrical_fault_dataset.py
+    uv run python -m emc_diag prepare --config configs/electrical_fault_detect_rf.yaml
+    uv run python -m emc_diag train --config configs/electrical_fault_detect_rf.yaml --device cpu
+    uv run python -m emc_diag train --config configs/electrical_fault_fault_code_rf.yaml --device cpu
     ```
 
 ## Local Example

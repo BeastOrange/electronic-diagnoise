@@ -72,6 +72,31 @@ CNN vs Qwen benchmark:
 uv run python -m emc_diag benchmark --configs configs/cognitive_radio_presence_qwen_vs_cnn.yaml --device cuda
 ```
 
+## Electrical Fault Fast-Recovery Route
+
+当 `PU_Presence` 主线无法提供足够强的展示结果时，优先切到这条数据集：
+
+```bash
+uv run python scripts/normalize_electrical_fault_dataset.py
+
+uv run python -m emc_diag prepare --config configs/electrical_fault_detect_rf.yaml
+uv run python -m emc_diag extract-features --config configs/electrical_fault_detect_rf.yaml
+uv run python -m emc_diag train --config configs/electrical_fault_detect_rf.yaml --device cpu
+
+uv run python -m emc_diag prepare --config configs/electrical_fault_fault_code_rf.yaml
+uv run python -m emc_diag extract-features --config configs/electrical_fault_fault_code_rf.yaml
+uv run python -m emc_diag train --config configs/electrical_fault_fault_code_rf.yaml --device cpu
+
+uv run python -m emc_diag prepare --config configs/electrical_fault_fault_code_cnn.yaml
+uv run python -m emc_diag train --config configs/electrical_fault_fault_code_cnn.yaml --device cuda
+```
+
+推荐优先级：
+
+- `configs/electrical_fault_detect_rf.yaml`: 二分类，最快拿高 accuracy
+- `configs/electrical_fault_fault_code_rf.yaml`: 6 分类，更适合作为“分类能力”展示主线
+- `configs/electrical_fault_fault_code_cnn.yaml`: 深度学习对照线
+
 ## Platform Bootstrap
 
 ### macOS (Apple Silicon, MPS)

@@ -4,6 +4,8 @@
 .venv/
 __pycache__/
 *.pyc
+/Electrical Fault detection and classification.zip*
+/data/electrical_fault_detection/
 
 artifacts/*
 !artifacts/reports/

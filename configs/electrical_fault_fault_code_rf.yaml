@@ -1,0 +1,39 @@
+dataset:
+  name: electrical_fault_detection
+  schema: tabular
+  input_path: ../data/electrical_fault_detection/classData_fault_code.csv
+  label_column: fault_code
+task:
+  type: classification
+  task_name: electrical_fault_fault_code_rf
+  target_column: fault_code
+  metric_primary: macro_f1
+  metric_secondary: accuracy
+  drop_leakage_columns:
+    - G
+    - C
+    - B
+    - A
+features:
+  method: hybrid
+  top_k: full
+model:
+  name: random_forest
+  candidates:
+    - random_forest
+    - bagged_logistic_regression
+trainer:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  random_state: 42
+metrics:
+  primary: macro_f1
+visualization:
+  theme: paper-bar
+evaluation:
+  cross_validation:
+    enabled: true
+    folds: 5
+runtime:
+  prepared_dir: ../artifacts/prepared_electrical_fault_fault_code_rf
+  artifacts_dir: ../artifacts/runs
