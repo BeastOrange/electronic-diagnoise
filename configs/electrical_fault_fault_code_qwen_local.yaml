@@ -20,18 +20,18 @@ features:
 model:
   name: llm_qlora_classifier
   mode: single_task
-  epochs: 2
+  epochs: 22
   batch_size: 2
-  learning_rate: 0.0001
+  learning_rate: 0.00005
   weight_decay: 0.01
-  patience: 1
+  patience: 5
   class_weighting: balanced
   llm:
     model_id: Qwen/Qwen2.5-7B-Instruct
     max_length: 256
     lora_r: 8
     lora_alpha: 16
-    lora_dropout: 0.05
+    lora_dropout: 0.1
     target_modules:
       - q_proj
       - k_proj
@@ -43,19 +43,19 @@ model:
     load_in_4bit: true
     bnb_4bit_quant_type: nf4
     gradient_accumulation_steps: 8
-    warmup_ratio: 0.03
+    warmup_ratio: 0.06
     save_adapter_only: true
     gradient_checkpointing: true
     torch_dtype: float16
     feature_limit: 18
     task_instruction: Classify the EMC-related electrical fault pattern of this three-phase sample using phase currents, phase voltages, and derived imbalance indicators.
     label_descriptions:
-      "0": fault_0000 normal balanced operating state
-      "1": fault_0110 phase B-C line fault signature without ground indicator
-      "2": fault_0111 three-phase fault signature without ground indicator
-      "3": fault_1001 phase A-to-ground asymmetrical fault signature
-      "4": fault_1011 multi-phase ground-coupled fault signature involving phases A and C
-      "5": fault_1111 severe three-phase ground-coupled fault signature
+      "0": "fault_0000 normal balanced three-phase operating state with no fault indicators"
+      "1": "fault_0110 line-to-line fault between phase B and phase C without ground involvement"
+      "2": "fault_0111 three-phase asymmetric fault across B-C with partial A coupling but NO ground path (ungrounded)"
+      "3": "fault_1001 single-phase-to-ground fault on phase A only with ground path active"
+      "4": "fault_1011 double-phase-to-ground fault involving phases A and C with ground path active"
+      "5": "fault_1111 three-phase symmetrical fault with ground path active (all phases and ground involved)"
 trainer:
   train_ratio: 0.7
   val_ratio: 0.15

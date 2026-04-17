@@ -352,7 +352,7 @@ def train_qwen_qlora_classifier(
     )
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "train_accuracy": [], "val_accuracy": [], "val_f1": []}
-    best_val_loss, best_epoch, epochs_without_improvement, stopped_early = float("inf"), -1, 0, False
+    best_val_f1, best_val_loss, best_epoch, epochs_without_improvement, stopped_early = -1.0, float("inf"), -1, 0, False
     best_state_dict: dict[str, Any] | None = None
     model_device = next(model.parameters()).device
     class_weighting_name = _normalize_class_weighting_name(class_weighting)
@@ -393,10 +393,10 @@ def train_qwen_qlora_classifier(
         history["val_f1"].append(score_metric(val_metrics, "f1"))
         if progress:
             print(f"[qwen_qlora_classifier] epoch {epoch_idx + 1}/{int(epochs)} train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_acc={history['val_accuracy'][-1]:.4f} val_f1={history['val_f1'][-1]:.4f}", flush=True)
-        if val_loss < best_val_loss:
-            best_val_loss, best_epoch, epochs_without_improvement = val_loss, epoch_idx, 0
-            # Save the best adapter weights instead of the last epoch so the
-            # exported LoRA artifact matches the recorded best checkpoint.
+        current_val_f1 = history["val_f1"][-1]
+        if current_val_f1 > best_val_f1:
+            best_val_f1, best_epoch, epochs_without_improvement = current_val_f1, epoch_idx, 0
+            best_val_loss = val_loss
             best_state_dict = _clone_state_dict(model.state_dict())
         else:
             epochs_without_improvement += 1
@@ -435,7 +435,7 @@ def train_qwen_qlora_classifier(
         "val_accuracy": score_metric(val_metrics, "accuracy"),
         "val_f1": score_metric(val_metrics, "f1"),
         "epochs_ran": len(history["train_loss"]),
-        "best_checkpoint": {"epoch": int(best_epoch + 1), "best_epoch": int(best_epoch), "val_loss": float(best_val_loss), "stopped_early": stopped_early},
+        "best_checkpoint": {"epoch": int(best_epoch + 1), "best_epoch": int(best_epoch), "val_loss": float(best_val_loss), "best_val_f1": float(best_val_f1), "stopped_early": stopped_early},
         "adapter_artifact_dir": str(adapter_dir),
         "llm_info": {
             "foundation_model_id": str(model_id),
