@@ -28,7 +28,7 @@ model:
   class_weighting: balanced
   llm:
     model_id: Qwen/Qwen2.5-7B-Instruct
-    max_length: 256
+    max_length: 320
     lora_r: 8
     lora_alpha: 16
     lora_dropout: 0.1
@@ -47,7 +47,7 @@ model:
     save_adapter_only: true
     gradient_checkpointing: true
     torch_dtype: float16
-    feature_limit: 25
+    feature_limit: 20
     task_instruction: Classify the EMC-related electrical fault pattern of this three-phase sample. Pay special attention to current_sum and voltage_sum (zero-sequence components) which distinguish GROUNDED faults (non-zero sum) from UNGROUNDED faults (near-zero sum).
     label_descriptions:
       "0": "fault_0000 normal balanced three-phase operating state with no fault indicators"
