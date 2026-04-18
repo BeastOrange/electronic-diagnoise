@@ -18,6 +18,10 @@ from emc_diag.cli import (
     main,
 )
 from emc_diag.config import load_config
+
+
+def _has_peft() -> bool:
+    return importlib.util.find_spec("peft") is not None
 from emc_diag.evaluation import evaluate_predictions
 from emc_diag.runtime import resolve_device
 
@@ -979,6 +983,10 @@ def test_call_with_batch_backoff_preserves_kwargs_for_wrapper_functions() -> Non
     assert result["y_val"] == [0]
 
 
+@pytest.mark.skipif(
+    not _has_peft(),
+    reason="QLoRA dependencies (peft/transformers) not installed",
+)
 def test_execute_training_forwards_class_weighting_to_llm_trainer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     raw_data_path = tmp_path / "synthetic_binary_llm.csv"
     prepared_dir = tmp_path / "prepared_llm"
@@ -1030,6 +1038,7 @@ def test_execute_training_keeps_baseline_dtype_consistent(tmp_path: Path, monkey
             "params": {},
         },
         "trainer": {"random_state": 7},
+        "features": {"method": "hybrid"},
         "evaluation": {"threshold_tuning": {"enabled": False}},
     }
     prepared = {
