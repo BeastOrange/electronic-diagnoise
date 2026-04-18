@@ -20,11 +20,11 @@ features:
 model:
   name: llm_qlora_classifier
   mode: single_task
-  epochs: 22
+  epochs: 15
   batch_size: 2
   learning_rate: 0.00005
   weight_decay: 0.01
-  patience: 5
+  patience: 3
   class_weighting: balanced
   llm:
     model_id: Qwen/Qwen2.5-7B-Instruct
@@ -47,8 +47,8 @@ model:
     save_adapter_only: true
     gradient_checkpointing: true
     torch_dtype: float16
-    feature_limit: 18
-    task_instruction: Classify the EMC-related electrical fault pattern of this three-phase sample using phase currents, phase voltages, and derived imbalance indicators.
+    feature_limit: 25
+    task_instruction: Classify the EMC-related electrical fault pattern of this three-phase sample. Pay special attention to current_sum and voltage_sum (zero-sequence components) which distinguish GROUNDED faults (non-zero sum) from UNGROUNDED faults (near-zero sum).
     label_descriptions:
       "0": "fault_0000 normal balanced three-phase operating state with no fault indicators"
       "1": "fault_0110 line-to-line fault between phase B and phase C without ground involvement"
